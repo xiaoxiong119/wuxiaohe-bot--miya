@@ -1,0 +1,40 @@
+<Slide style={{ width: 1280, height: 720, background: '#FFFFFF', padding: 60, position: 'relative' }}>
+    {/* 左栏：目录标识 */}
+    <Box style={{ flexDirection: 'column', width: 300 }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', letterSpacing: 3, fontFamily: 'Microsoft YaHei' }}>
+            CONTENT
+        </Text>
+        <Text style={{ fontSize: 56, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.15, marginTop: 12, fontFamily: 'Microsoft YaHei' }}>
+            目录
+        </Text>
+        <Box style={{ width: 56, height: 4, background: '#F97316', borderRadius: 2, marginTop: 24 }} />
+        <Text style={{ fontSize: 14, color: '#94A3B8', lineHeight: 1.8, marginTop: 340, width: 240, fontFamily: 'Microsoft YaHei' }}>
+            飞书多维表格与机器人
+        </Text>
+        <Text style={{ fontSize: 14, color: '#94A3B8', lineHeight: 1.8, marginTop: 4, width: 240, fontFamily: 'Microsoft YaHei' }}>
+            内部技术分享 · 2026.10
+        </Text>
+    </Box>
+
+    {/* 右栏：章节清单 */}
+    <Box style={{ position: 'absolute', top: 96, left: 420, width: 800, flexDirection: 'column' }}>
+        {[
+            { no: '01', name: '一件事，要过三道手', page: '03 – 05' },
+            { no: '02', name: '机器人到底是什么', page: '06 – 08' },
+            { no: '03', name: '多维表格 × 机器人', page: '09 – 13' },
+            { no: '04', name: '坑，与上手', page: '14 – 17' },
+        ].map((item, idx) => (
+            <Box key={idx} style={{ flexDirection: 'row', alignItems: 'center', height: 116, borderBottom: '1px solid #E2E8F0' }}>
+                <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#CBD5E1', width: 96, fontFamily: 'Microsoft YaHei' }}>
+                    {item.no}
+                </Text>
+                <Text style={{ fontSize: 30, fontWeight: 'bold', color: '#0B1F3A', flex: 1, fontFamily: 'Microsoft YaHei' }}>
+                    {item.name}
+                </Text>
+                <Text style={{ fontSize: 15, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>
+                    {item.page}
+                </Text>
+            </Box>
+        ))}
+    </Box>
+</Slide>

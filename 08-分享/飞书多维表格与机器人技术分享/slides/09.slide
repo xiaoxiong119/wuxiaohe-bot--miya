@@ -1,0 +1,17 @@
+<Slide style={{ width: 1280, height: 720, background: '#FFFFFF', padding: 60, position: 'relative' }}>
+    <Box style={{ position: 'absolute', left: 0, top: 0, width: 6, height: 720, background: '#1D4ED8' }} />
+    <Box style={{ position: 'absolute', left: 96, top: 150, width: 1120, flexDirection: 'row', alignItems: 'flex-end', gap: 48 }}>
+        <Text style={{ fontSize: 180, fontWeight: 'bold', color: '#BFDBFE', lineHeight: 1, fontFamily: 'Microsoft YaHei' }}>
+            03
+        </Text>
+        <Box style={{ flexDirection: 'column', width: 620, paddingBottom: 26 }}>
+            <Text style={{ fontSize: 56, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.2, fontFamily: 'Microsoft YaHei' }}>
+                多维表格 × 机器人
+            </Text>
+            <Box style={{ width: 440, height: 3, background: '#F97316', borderRadius: 2, marginTop: 26 }} />
+            <Text style={{ fontSize: 20, color: '#475569', lineHeight: 1.7, marginTop: 22, fontFamily: 'Microsoft YaHei' }}>
+                表里点一下、群里点一下，背后要三层东西接得上。缺一层，流程就断在半路。
+            </Text>
+        </Box>
+    </Box>
+</Slide>

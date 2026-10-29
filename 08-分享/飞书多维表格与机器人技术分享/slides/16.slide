@@ -1,0 +1,65 @@
+<Slide style={{ width: 1280, height: 720, background: '#FFFFFF', padding: 60, position: 'relative' }}>
+    <Box style={{ flexDirection: 'column' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', letterSpacing: 1.6, fontFamily: 'Microsoft YaHei' }}>
+            04 · 坑，与上手
+        </Text>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.2, marginTop: 10, fontFamily: 'Microsoft YaHei' }}>
+            同事要上手，就三步
+        </Text>
+        <Box style={{ width: '100%', height: 1, background: '#E2E8F0', marginTop: 18 }} />
+    </Box>
+
+    {/* 左侧色块 */}
+    <Box style={{ position: 'absolute', left: 60, top: 176, width: 360, height: 467, background: '#1D4ED8', borderRadius: 12, padding: 26, flexDirection: 'column' }}>
+        <Text style={{ fontSize: 14, color: '#BFD3FF', letterSpacing: 1.6, fontFamily: 'Microsoft YaHei' }}>GET STARTED</Text>
+        <Text style={{ fontSize: 28, fontWeight: 'bold', color: '#FFFFFF', lineHeight: 1.2, marginTop: 10, fontFamily: 'Microsoft YaHei' }}>上手三步</Text>
+        <Box style={{ flexDirection: 'column', gap: 18, marginTop: 22 }}>
+            {[
+                { no: '01', name: '先认门', desc: '私聊它，或者把它拉进群，发一句 /help' },
+                { no: '02', name: '再干活', desc: '发视频，紧接着发 /upmedia 67' },
+                { no: '03', name: '接流程', desc: '表格里建自动化，动作选「发送飞书消息」' },
+            ].map((st, i) => (
+                <Box key={i} style={{ flexDirection: 'row', gap: 10 }}>
+                    <Text style={{ fontSize: 14, color: '#8FB2F5', fontFamily: 'Consolas', marginTop: 4 }}>{st.no}</Text>
+                    <Box style={{ flexDirection: 'column', width: 262 }}>
+                        <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#FFFFFF', fontFamily: 'Microsoft YaHei' }}>{st.name}</Text>
+                        <Text style={{ fontSize: 15, color: '#DBEAFE', lineHeight: 1.6, marginTop: 3, fontFamily: 'Microsoft YaHei' }}>{st.desc}</Text>
+                    </Box>
+                </Box>
+            ))}
+        </Box>
+        <Box style={{ flex: 1 }} />
+        <Box style={{ width: '100%', height: 1, background: 'rgba(255,255,255,0.25)' }} />
+        <Text style={{ fontSize: 14, color: '#BFD3FF', lineHeight: 1.6, marginTop: 12, fontFamily: 'Microsoft YaHei' }}>
+            命令只是把文字填进输入框，它收到的还是普通消息 —— 所以能补半句话。
+        </Text>
+    </Box>
+
+    {/* 右侧命令清单 */}
+    <Box style={{ position: 'absolute', left: 460, top: 176, width: 760, flexDirection: 'column' }}>
+        <Box style={{ flexDirection: 'row', paddingBottom: 10, borderBottom: '1px solid #CBD5E1' }}>
+            <Text style={{ fontSize: 14, color: '#94A3B8', letterSpacing: 1, width: 210, fontFamily: 'Microsoft YaHei' }}>命令</Text>
+            <Text style={{ fontSize: 14, color: '#94A3B8', letterSpacing: 1, fontFamily: 'Microsoft YaHei' }}>作用</Text>
+        </Box>
+        {[
+            ['/upmedia 名字', '把最新一条视频传到分秒帧，落盘就叫这个名字'],
+            ['/driveup 名字', '传云盘收件夹里的某一个文件'],
+            ['/drive', '扫一遍云盘收件夹；带链接就换收件夹'],
+            ['/base …', '改多维表格字段：集数 + 字段 + 值'],
+            ['/tbpz', '分秒帧批注同步到表格；加「预览」只读'],
+            ['/target', '看当前上传目标，带链接就换目标'],
+            ['/help', '发一张能力卡片，正文现读，改完不用重启'],
+        ].map(([cmd, desc], i) => (
+            <Box key={i} style={{ flexDirection: 'row', alignItems: 'center', height: 62, borderBottom: '1px solid #EEF2F7' }}>
+                <Text style={{ fontSize: 17, fontWeight: 'bold', color: '#1D4ED8', width: 210, fontFamily: 'Consolas' }}>{cmd}</Text>
+                <Text style={{ fontSize: 16, color: '#334155', fontFamily: 'Microsoft YaHei' }}>{desc}</Text>
+            </Box>
+        ))}
+    </Box>
+
+    {/* 页脚 */}
+    <Box style={{ position: 'absolute', left: 60, top: 670, width: 1160, flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>乌小河 · 技术分享</Text>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>16 / 18</Text>
+    </Box>
+</Slide>

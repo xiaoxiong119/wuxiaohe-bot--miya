@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>乌小河 · 多维表格全流程（按钮 → 字段 → 发送条件）</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 48px 56px 56px;
+    background: #f5f7fa;
+    font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    color: #1f2329;
+    width: 1400px;
+  }
+  h1 { font-size: 40px; margin: 0 0 10px; letter-spacing: .5px; }
+  .sub { font-size: 19px; color: #646a73; margin-bottom: 30px; }
+  .legend { display: flex; gap: 26px; font-size: 17px; color: #646a73; margin-bottom: 34px; }
+  .legend i { display: inline-block; width: 14px; height: 14px; border-radius: 4px; margin-right: 8px; vertical-align: -2px; }
+  .k-auto { background: #3370ff; }
+  .k-btn { background: #ff8800; }
+  .k-done { background: #00b578; }
+
+  .step { position: relative; padding-left: 46px; margin-bottom: 26px; }
+  .step::before {
+    content: ""; position: absolute; left: 13px; top: 30px; bottom: -26px; width: 2px; background: #d6dbe3;
+  }
+  .step:last-child::before { display: none; }
+  .dot {
+    position: absolute; left: 4px; top: 20px; width: 20px; height: 20px; border-radius: 50%;
+    background: #fff; border: 4px solid #3370ff;
+  }
+  .dot.orange { border-color: #ff8800; }
+  .dot.green { border-color: #00b578; }
+  .dot.gray { border-color: #a8b0bd; }
+
+  .box {
+    background: #fff; border-radius: 14px; padding: 22px 26px;
+    box-shadow: 0 1px 3px rgba(31,35,41,.08), 0 8px 24px rgba(31,35,41,.04);
+    border: 1px solid #e6e9ef;
+  }
+  .box.auto { border-left: 6px solid #3370ff; }
+  .box.btn { border-left: 6px solid #ff8800; }
+  .box.done { border-left: 6px solid #00b578; }
+  .box.gray { border-left: 6px solid #a8b0bd; }
+
+  .head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .tag {
+    font-size: 14px; font-weight: 600; padding: 3px 10px; border-radius: 6px; letter-spacing: .5px;
+  }
+  .tag.auto { background: #e8f0ff; color: #245bdb; }
+  .tag.btn { background: #fff2e0; color: #b35c00; }
+  .tag.done { background: #e3f8ef; color: #00855a; }
+  .title { font-size: 24px; font-weight: 650; }
+  .who { font-size: 17px; color: #8f959e; }
+
+  .cond { margin-top: 12px; font-size: 18px; color: #3f444d; line-height: 1.65; }
+  .cond code {
+    background: #f2f3f5; padding: 2px 8px; border-radius: 5px;
+    font-family: "SF Mono", Menlo, monospace; font-size: 16px; color: #1f2329;
+  }
+
+  .actions { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .act {
+    display: grid; grid-template-columns: 168px 1fr; gap: 16px; align-items: start;
+    background: #fafbfc; border: 1px solid #eceff3; border-radius: 10px; padding: 12px 16px;
+  }
+  .pill {
+    font-size: 16px; font-weight: 600; color: #fff; background: #ff8800;
+    border-radius: 999px; padding: 6px 16px; text-align: center; white-space: nowrap;
+  }
+  .pill.pass { background: #00b578; }
+  .pill.fail { background: #f54a45; }
+  .writes { font-size: 17px; line-height: 1.6; }
+  .writes code {
+    background: #eef1f6; padding: 2px 7px; border-radius: 5px;
+    font-family: "SF Mono", Menlo, monospace; font-size: 15.5px;
+  }
+  .writes .then { color: #646a73; }
+  .writes b { color: #1f2329; }
+
+  .footer {
+    margin-top: 30px; background: #fff; border: 1px dashed #c9d0da; border-radius: 12px;
+    padding: 18px 24px; font-size: 17px; color: #3f444d; line-height: 1.7;
+  }
+  .footer b { color: #b35c00; }
+</style>
+</head>
+<body>
+  <h1>乌小河 · 多维表格全流程</h1>
+  <div class="sub">每个按钮改哪些字段、每张卡片什么时候发 —— 一图看完（2026-10-28 版）</div>
+  <div class="legend">
+    <span><i class="k-auto"></i>机器人自动（每分钟巡检）</span>
+    <span><i class="k-btn"></i>人点按钮</span>
+    <span><i class="k-done"></i>流程走完</span>
+  </div>
+
+  <div class="step">
+    <div class="dot"></div>
+    <div class="box auto">
+      <div class="head"><span class="tag auto">自动</span><span class="title">开工</span><span class="who">每分钟巡检</span></div>
+      <div class="cond">条件：<code>开始日期 ≤ 今天</code> 且 <code>进展 = 待开始</code></div>
+      <div class="cond">写入：<code>进展 → 进行中</code>　<code>素材生成进展 → 生成中</code>（只在还是「待开始」时改，不覆盖已有进度）</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="dot"></div>
+    <div class="box auto">
+      <div class="head"><span class="tag auto">自动</span><span class="title">发「一审」卡片</span><span class="who">发给审片人（剪辑师旁观）</span></div>
+      <div class="cond">条件：<code>素材生成进展 = 已粗剪待一审</code>（改表或上传视频都会触发；同一状态只发一次）</div>
+      <div class="actions">
+        <div class="act">
+          <div class="pill pass">一审通过</div>
+          <div class="writes">写 <code>审阅反馈 = 通过</code>　<code>剪辑进度 = 可剪辑</code><br>
+            <span class="then">→ 给制作师发「请上传素材」卡；若素材已上传过，直接给剪辑师发「开始精剪」卡</span></div>
+        </div>
+        <div class="act">
+          <div class="pill fail">一审未通过</div>
+          <div class="writes">写 <code>审阅反馈 = 有修改</code>　<code>素材生成进展 = 修改中</code><br>
+            <span class="then">→ 给制作师发「请修改」卡（已是有修改时不再重复通知）</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="dot orange"></div>
+    <div class="box btn">
+      <div class="head"><span class="tag btn">制作师</span><span class="title">「请修改」卡片</span><span class="who">一审未通过后发</span></div>
+      <div class="actions">
+        <div class="act">
+          <div class="pill">/upmedia 或 /driveup 上传修改版</div>
+          <div class="writes">上传成功后自动写 <code>素材生成进展 = 已粗剪待一审</code><br>
+            <span class="then">→ 立刻重发「一审」卡片给审片人</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="dot orange"></div>
+    <div class="box btn">
+      <div class="head"><span class="tag btn">制作师</span><span class="title">「请上传素材」卡片</span><span class="who">一审通过后发</span></div>
+      <div class="actions">
+        <div class="act">
+          <div class="pill">素材已上传</div>
+          <div class="writes">写 <code>素材生成进展 = 已完成并上传</code><br>
+            <span class="then">→ 若另外两个条件也齐了，直接给剪辑师发「开始精剪」卡</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="dot"></div>
+    <div class="box auto">
+      <div class="head"><span class="tag auto">自动</span><span class="title">发「开始精剪」卡片</span><span class="who">发给剪辑师</span></div>
+      <div class="cond">条件（三条同时成立，谁先谁后都行，巡检会自动补发）：<br>
+        <code>剪辑进度 = 可剪辑</code> ＋ <code>素材生成进展 = 已完成并上传</code> ＋ <code>审阅反馈 = 通过</code></div>
+      <div class="actions">
+        <div class="act">
+          <div class="pill">开始剪辑</div>
+          <div class="writes">写 <code>剪辑进度 = 剪辑中</code></div>
+        </div>
+        <div class="act">
+          <div class="pill">精剪完成</div>
+          <div class="writes">写 <code>剪辑进度 = 待审片</code><br>
+            <span class="then">→ 给审片人发「剪辑终审」卡片</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="dot orange"></div>
+    <div class="box btn">
+      <div class="head"><span class="tag btn">审片人</span><span class="title">「剪辑终审」卡片</span><span class="who">精剪完成后发</span></div>
+      <div class="actions">
+        <div class="act">
+          <div class="pill">查看成片</div>
+          <div class="writes">打开成片目录（分秒帧）＋ 写 <code>剪辑进度 = 审片中</code></div>
+        </div>
+        <div class="act">
+          <div class="pill pass">剪辑通过</div>
+          <div class="writes">写 <code>审阅反馈 = 通过</code>　<code>剪辑进度 = 已定剪</code>　<code>进展 = 已完成</code>　<code>实际完成日期 = 当天</code></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="dot green"></div>
+    <div class="box done">
+      <div class="head"><span class="tag done">完成</span><span class="title">这一集走完</span><span class="who">素材生成 → 一审 → 精剪 → 终审 → 定剪</span></div>
+      <div class="cond">卡面显示：审阅反馈 通过 ／ 剪辑进度 已定剪 ／ 进展 已完成 ／ 实际完成日期</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <b>每个按钮点完都会留一个「↩︎ 撤回刚才的操作」按钮</b>：点它就把这一步改的字段写回原来的值，卡片也复原成点之前那张
+    （一审卡、请修改卡、请上传素材卡、开始精剪卡、终审卡都适用）。<br>
+    注意：撤回只改表，已经发出去的通知收不回来（制作师 / 剪辑师手机上的那张卡还在，可以忽略）。
+  </div>
+</body>
+</html>

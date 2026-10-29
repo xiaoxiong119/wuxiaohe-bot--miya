@@ -1,0 +1,14 @@
+{
+  "name": "feishu-video-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "飞书自建应用：私聊发视频 → 自动上传分秒帧",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "upload": "node src/worker.js"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.76.0"
+  }
+}

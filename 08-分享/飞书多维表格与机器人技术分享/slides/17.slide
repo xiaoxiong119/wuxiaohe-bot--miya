@@ -1,0 +1,49 @@
+<Slide style={{ width: 1280, height: 720, background: '#FFFFFF', padding: 60, position: 'relative' }}>
+    <Box style={{ flexDirection: 'column' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', letterSpacing: 1.6, fontFamily: 'Microsoft YaHei' }}>
+            04 · 坑，与上手
+        </Text>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.2, marginTop: 10, fontFamily: 'Microsoft YaHei' }}>
+            四条边界绕不过去，先知道再动手
+        </Text>
+        <Box style={{ width: '100%', height: 1, background: '#E2E8F0', marginTop: 18 }} />
+    </Box>
+
+    {/* 2×2 矩阵的轴 */}
+    <Box style={{ position: 'absolute', left: 640, top: 176, width: 1, height: 390, background: '#E2E8F0' }} />
+    <Box style={{ position: 'absolute', left: 60, top: 372, width: 1160, height: 1, background: '#E2E8F0' }} />
+
+    {[
+        { left: 60, top: 176, name: '主机在不在', now: '合盖休眠，长连接就断 —— 在不在线取决于这台 Mac', fix: '要 7×24，就把核心逻辑搬到云函数' },
+        { left: 664, top: 176, name: '单文件 100 MB', now: '飞书 messageResource 的硬上限，超了根本下不下来', fix: '更大的先压缩或分卷，再传' },
+        { left: 60, top: 396, name: '平台登录态', now: '分秒帧没有上传 API，只能驱动本机 Chrome 跑网页', fix: '登录过期就传不了，得手动重登一次' },
+        { left: 664, top: 396, name: '事件独占', now: '同一应用只能有一个稳定消费者，消息和回调会抢', fix: '卡在回调，就再建一个应用专管回调' },
+    ].map((c, i) => (
+        <Box key={i} style={{ position: 'absolute', left: c.left, top: c.top, width: 556, flexDirection: 'column' }}>
+            <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#0B1F3A', fontFamily: 'Microsoft YaHei' }}>{c.name}</Text>
+            <Text style={{ fontSize: 18, color: '#475569', lineHeight: 1.6, marginTop: 10, fontFamily: 'Microsoft YaHei' }}>{c.now}</Text>
+            <Box style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 12 }}>
+                <Text style={{ fontSize: 14, color: '#F97316', fontWeight: 'bold', marginTop: 3, fontFamily: 'Microsoft YaHei' }}>对策</Text>
+                <Text style={{ fontSize: 16, color: '#0B1F3A', lineHeight: 1.6, width: 460, fontFamily: 'Microsoft YaHei' }}>{c.fix}</Text>
+            </Box>
+        </Box>
+    ))}
+
+    {/* 底部下一步 */}
+    <Box style={{ position: 'absolute', left: 60, top: 596, width: 1160, flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+        <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#1D4ED8', width: 76, fontFamily: 'Microsoft YaHei' }}>下一步</Text>
+        <Box style={{ width: 1, height: 18, background: '#CBD5E1' }} />
+        {['卡片回调拆到独立应用', '用分秒帧开放平台 API 替换网页自动化', '加队列、重试、失败告警'].map((t, i) => (
+            <Box key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 18 }}>
+                <Text style={{ fontSize: 14, color: '#F97316', fontFamily: 'Consolas' }}>0{i + 1}</Text>
+                <Text style={{ fontSize: 17, color: '#334155', fontFamily: 'Microsoft YaHei' }}>{t}</Text>
+            </Box>
+        ))}
+    </Box>
+
+    {/* 页脚 */}
+    <Box style={{ position: 'absolute', left: 60, top: 670, width: 1160, flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>乌小河 · 技术分享</Text>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>17 / 18</Text>
+    </Box>
+</Slide>

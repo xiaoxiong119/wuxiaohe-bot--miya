@@ -1,0 +1,47 @@
+<Slide style={{ width: 1280, height: 720, background: '#FFFFFF', padding: 60, position: 'relative' }}>
+    <Box style={{ flexDirection: 'column' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', letterSpacing: 1.6, fontFamily: 'Microsoft YaHei' }}>
+            04 · 坑，与上手
+        </Text>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.2, marginTop: 10, fontFamily: 'Microsoft YaHei' }}>
+            六个坑，都是写完才明白的
+        </Text>
+        <Box style={{ width: '100%', height: 1, background: '#E2E8F0', marginTop: 18 }} />
+    </Box>
+
+    <Box style={{ position: 'absolute', left: 60, top: 176, width: 1160, height: 392, border: '1px solid #E2E8F0', borderRadius: 12, flexDirection: 'column' }}>
+        <Box style={{ height: 42, flexDirection: 'row', alignItems: 'center', background: '#F8FAFC', borderTopLeftRadius: 12, borderTopRightRadius: 12, paddingLeft: 24, paddingRight: 24 }}>
+            <Text style={{ fontSize: 14, color: '#64748B', width: 230, fontFamily: 'Microsoft YaHei' }}>坑</Text>
+            <Text style={{ fontSize: 14, color: '#64748B', width: 430, fontFamily: 'Microsoft YaHei' }}>现象</Text>
+            <Text style={{ fontSize: 14, color: '#64748B', width: 450, fontFamily: 'Microsoft YaHei' }}>解法</Text>
+        </Box>
+        {[
+            ['长连接 3 秒超时', '飞书等不到响应就重推同一件事', '秒回 + 队列 + 按 message_id 去重'],
+            ['事件独占', '同一应用两个消费者，事件随机分给一个', '卡片回调和消息拆到两个应用'],
+            ['参数名不一样', '文档写 app_token，CLI 要 --base-token', 'wiki 链接先解包成真实 token 再查'],
+            ['插件沙箱', 'axios / sharp / moment 装了也用不了', '只用 context.fetch 和原生 API'],
+            ['拿不到 token', '发消息直接 401，日志里看不出原因', '声明 useTenantAccessToken: true'],
+            ['进程被回收', 'nohup 和后台起的进程活不长', '终端里 ./start.sh，别用 nohup'],
+        ].map((r, i) => (
+            <Box key={i} style={{ height: 56, flexDirection: 'row', alignItems: 'center', borderBottom: '1px solid #EEF2F7', paddingLeft: 24, paddingRight: 24 }}>
+                <Text style={{ fontSize: 17, fontWeight: 'bold', color: '#0B1F3A', width: 230, fontFamily: 'Microsoft YaHei' }}>{r[0]}</Text>
+                <Text style={{ fontSize: 16, color: '#475569', width: 430, fontFamily: 'Microsoft YaHei' }}>{r[1]}</Text>
+                <Text style={{ fontSize: 16, color: '#334155', width: 450, fontFamily: 'Microsoft YaHei' }}>{r[2]}</Text>
+            </Box>
+        ))}
+    </Box>
+
+    {/* 底部结论 */}
+    <Box style={{ position: 'absolute', left: 60, top: 592, width: 1160, flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+        <Box style={{ width: 4, height: 22, background: '#F97316', borderRadius: 2 }} />
+        <Text style={{ fontSize: 20, color: '#0B1F3A', lineHeight: 1.5, fontFamily: 'Microsoft YaHei' }}>
+            六个里有一半不是 bug，是机制 —— <span style={{ color: '#F97316', fontWeight: 'bold' }}>先认清机制，再改代码</span>
+        </Text>
+    </Box>
+
+    {/* 页脚 */}
+    <Box style={{ position: 'absolute', left: 60, top: 670, width: 1160, flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>乌小河 · 技术分享</Text>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>15 / 18</Text>
+    </Box>
+</Slide>

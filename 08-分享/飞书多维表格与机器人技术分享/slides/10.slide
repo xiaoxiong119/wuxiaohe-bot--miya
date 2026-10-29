@@ -1,0 +1,76 @@
+<Slide style={{ width: 1280, height: 720, background: '#FFFFFF', padding: 60, position: 'relative' }}>
+    <Box style={{ flexDirection: 'column' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', letterSpacing: 1.6, fontFamily: 'Microsoft YaHei' }}>
+            03 · 多维表格 × 机器人
+        </Text>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.2, marginTop: 10, fontFamily: 'Microsoft YaHei' }}>
+            要让表格动起来，得三层各接一段
+        </Text>
+        <Box style={{ width: '100%', height: 1, background: '#E2E8F0', marginTop: 18 }} />
+    </Box>
+
+    {/* 第一层 */}
+    <Box style={{ position: 'absolute', left: 60, top: 172, width: 860, height: 126, background: '#F8FAFC', borderRadius: 12, padding: 12, paddingLeft: 22, flexDirection: 'column' }}>
+        <Box style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+                <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#CBD5E1', lineHeight: 1, width: 52, fontFamily: 'Microsoft YaHei' }}>01</Text>
+                <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#0B1F3A', fontFamily: 'Microsoft YaHei' }}>触发 · 什么时候动手</Text>
+            </Box>
+            <Box style={{ border: '1px solid #E2E8F0', borderRadius: 6, paddingTop: 6, paddingBottom: 6, paddingLeft: 12, paddingRight: 12 }}>
+                <Text style={{ fontSize: 14, color: '#64748B', fontFamily: 'Microsoft YaHei' }}>表格里配，零代码</Text>
+            </Box>
+        </Box>
+        <Text style={{ fontSize: 18, color: '#475569', lineHeight: 1.5, marginTop: 6, marginLeft: 70, fontFamily: 'Microsoft YaHei' }}>
+            多维表格自带的自动化：记录新增、字段变更、到点跑、表单提交。选一个条件，就是整条流程的起点。
+        </Text>
+    </Box>
+
+    {/* 第二层 */}
+    <Box style={{ position: 'absolute', left: 60, top: 314, width: 990, height: 126, background: '#EFF6FF', borderRadius: 12, padding: 12, paddingLeft: 22, flexDirection: 'column' }}>
+        <Box style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+                <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#BFDBFE', lineHeight: 1, width: 52, fontFamily: 'Microsoft YaHei' }}>02</Text>
+                <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#0B1F3A', fontFamily: 'Microsoft YaHei' }}>动作 · 动手做什么</Text>
+            </Box>
+            <Box style={{ border: '1px solid #BFDBFE', borderRadius: 6, paddingTop: 6, paddingBottom: 6, paddingLeft: 12, paddingRight: 12 }}>
+                <Text style={{ fontSize: 14, color: '#1D4ED8', fontFamily: 'Microsoft YaHei' }}>npm 打包上传</Text>
+            </Box>
+        </Box>
+        <Text style={{ fontSize: 18, color: '#334155', lineHeight: 1.5, marginTop: 6, marginLeft: 70, fontFamily: 'Microsoft YaHei' }}>
+            一个跑在飞书沙箱里的 Node 函数：接收表格传来的参数，发文本、发卡片、或者调接口 —— 我们就写了这么一个。
+        </Text>
+    </Box>
+
+    {/* 第三层 */}
+    <Box style={{ position: 'absolute', left: 60, top: 456, width: 1120, height: 136, background: '#1D4ED8', borderRadius: 12, padding: 16, paddingLeft: 22, flexDirection: 'column' }}>
+        <Box style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+                <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#7BA3F0', lineHeight: 1, width: 52, fontFamily: 'Microsoft YaHei' }}>03</Text>
+                <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#FFFFFF', fontFamily: 'Microsoft YaHei' }}>回写 · 结果写回哪</Text>
+            </Box>
+            <Box style={{ border: '1px solid rgba(255,255,255,0.45)', borderRadius: 6, paddingTop: 6, paddingBottom: 6, paddingLeft: 12, paddingRight: 12 }}>
+                <Text style={{ fontSize: 14, color: '#DBEAFE', fontFamily: 'Microsoft YaHei' }}>自己接，或用表单绕</Text>
+            </Box>
+        </Box>
+        <Text style={{ fontSize: 18, color: '#E6EEFF', lineHeight: 1.5, marginTop: 8, marginLeft: 70, fontFamily: 'Microsoft YaHei' }}>
+            按钮点下去要改记录，得有人接住这个事件（card.action.trigger），解析参数再调接口写回。
+        </Text>
+        <Text style={{ fontSize: 18, color: '#BFD3FF', lineHeight: 1.5, marginTop: 2, marginLeft: 70, fontFamily: 'Microsoft YaHei' }}>
+            这一步官方没给现成方案 —— 它是「通知」和「流程」的分水岭。
+        </Text>
+    </Box>
+
+    {/* 底部结论 */}
+    <Box style={{ position: 'absolute', left: 60, top: 608, width: 1160, flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+        <Box style={{ width: 4, height: 22, background: '#F97316', borderRadius: 2 }} />
+        <Text style={{ fontSize: 20, color: '#0B1F3A', lineHeight: 1.5, fontFamily: 'Microsoft YaHei' }}>
+            前两层是开箱的，<span style={{ color: '#F97316', fontWeight: 'bold' }}>第三层才是分水岭</span>：接得住，才叫「点一下就把表改了」
+        </Text>
+    </Box>
+
+    {/* 页脚 */}
+    <Box style={{ position: 'absolute', left: 60, top: 670, width: 1160, flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>乌小河 · 技术分享</Text>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>10 / 18</Text>
+    </Box>
+</Slide>

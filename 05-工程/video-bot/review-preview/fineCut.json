@@ -1,0 +1,470 @@
+{
+  "version": 1,
+  "profile": "fineCut",
+  "runStart": 1793243888585,
+  "full": false,
+  "sinceMs": 0,
+  "complete": false,
+  "mediatrackUrl": "https://app.mediatrack.cn/projects/2109939996814217216/files?path=2112064548004433920",
+  "appToken": "[已脱敏]",
+  "tableId": "[已脱敏]",
+  "rows": [
+    {
+      "episode": 110,
+      "timeline": "00:27",
+      "content": "这里背景音乐声大",
+      "at": 1793243880000,
+      "author": "冯先生@冯先生",
+      "file": "110.mp4"
+    },
+    {
+      "episode": 111,
+      "timeline": "00:00",
+      "content": "整体bgm缩小一点，大概缩小至当前的80%",
+      "at": 1793243760000,
+      "author": "冯先生@冯先生",
+      "file": "111.mp4"
+    },
+    {
+      "episode": 116,
+      "timeline": "00:00",
+      "content": "陈俊杰测试批注。",
+      "at": 1793240820000,
+      "author": "陈俊杰",
+      "file": "116.mp4"
+    },
+    {
+      "episode": 116,
+      "timeline": "00:22",
+      "content": "这个血很怪，看看能不嫩删掉，或者不好表达的话重生一个这个镜头去掉这个擦血",
+      "at": 1793241780000,
+      "author": "冯先生@冯先生",
+      "file": "116.mp4"
+    },
+    {
+      "episode": 112,
+      "timeline": "00:00",
+      "content": "这里开头bgm有点吵，盖过人声了",
+      "at": 1793243460000,
+      "author": "冯先生@冯先生",
+      "file": "112.mp4"
+    },
+    {
+      "episode": 112,
+      "timeline": "01:28",
+      "content": "这里的bgm问题同上",
+      "at": 1793243460000,
+      "author": "冯先生@冯先生",
+      "file": "112.mp4"
+    },
+    {
+      "episode": 72,
+      "timeline": "02:19",
+      "content": "定帧",
+      "at": 1793243340000,
+      "author": "屠斯航",
+      "file": "72.mp4"
+    },
+    {
+      "episode": 113,
+      "timeline": "00:00",
+      "content": "整集bgm略微往小调整，注意下听感方面的优先级，注意音乐一定是不能强过对话的，（对话、关键音效）这都是第一优先级，背景音乐声音是一定不能太明显导致有种盖过说话声音的",
+      "at": 1793243100000,
+      "author": "冯先生@冯先生",
+      "file": "113.mp4"
+    },
+    {
+      "episode": 113,
+      "timeline": "01:45",
+      "content": "这个手掌和剑的侧面表现优化一下形式，剑要横着扎进去",
+      "at": 1793243220000,
+      "author": "冯先生@冯先生",
+      "file": "113.mp4"
+    },
+    {
+      "episode": 21,
+      "timeline": "00:32",
+      "content": "优化镜头，特写眼部，睁开。画面要美。参考前2s的视觉张力https://www.xiaohongshu.com/explore/6a881b7c000000003b014df5?xsec_token=ABICWPERju5dA3CgO3MnF1UjWaWkd76ZNJJ3lmAflmj_k=&xsec_source=pc_search&source=web_search_result_notes",
+      "at": 1793242680000,
+      "author": "成艳@6524",
+      "file": "21.mp4"
+    },
+    {
+      "episode": 114,
+      "timeline": "00:00",
+      "content": "这集整体像bgm通铺，像那种二创剪辑，没有很符合剧情内容，看的时候很膈应，一直噔噔噔在响，比较影响体验",
+      "at": 1793242560000,
+      "author": "冯先生@冯先生",
+      "file": "114.mp4"
+    },
+    {
+      "episode": 17,
+      "timeline": "01:23",
+      "content": "- 01:34 男主颜值展示，这里画面可优化。镜头也可以带一点运动",
+      "at": 1793242440000,
+      "author": "成艳@6524",
+      "file": "17.mp4"
+    },
+    {
+      "episode": 115,
+      "timeline": "00:00",
+      "content": "整集bgm音量缩小至当前的90%",
+      "at": 1793242380000,
+      "author": "冯先生@冯先生",
+      "file": "115.mp4"
+    },
+    {
+      "episode": 115,
+      "timeline": "01:31",
+      "content": "这个救下一个，下的四声不够明显，重新生一下语音，也可以试试单独生 下一个，然后拼上去",
+      "at": 1793242260000,
+      "author": "冯先生@冯先生",
+      "file": "115.mp4"
+    },
+    {
+      "episode": 13,
+      "timeline": "00:06",
+      "content": "这个加一个镜头，天马wink 谄媚的表情做出来。增加剧集讨论度",
+      "at": 1793241840000,
+      "author": "成艳@6524",
+      "file": "13.mp4"
+    },
+    {
+      "episode": 118,
+      "timeline": "00:13",
+      "content": "这个和上个接不上，最好换一个左侧纯侧面近景特写，头部肩部就好，她说话的时候眼神瞥向左侧（她的左后方）就通顺了",
+      "at": 1793241540000,
+      "author": "冯先生@冯先生",
+      "file": "118.mp4"
+    },
+    {
+      "episode": 118,
+      "timeline": "00:36",
+      "content": "这里颜色偏的有点多，剪辑调下色",
+      "at": 1793241600000,
+      "author": "冯先生@冯先生",
+      "file": "118.mp4"
+    },
+    {
+      "episode": 118,
+      "timeline": "00:39",
+      "content": "加个尴尬搞笑的音效",
+      "at": 1793241600000,
+      "author": "冯先生@冯先生",
+      "file": "118.mp4"
+    },
+    {
+      "episode": 55,
+      "timeline": "00:00",
+      "content": "陈俊杰测试批注",
+      "at": 1793240820000,
+      "author": "陈俊杰",
+      "file": "55.mp4"
+    },
+    {
+      "episode": 106,
+      "timeline": "00:01",
+      "content": "这里是不是用过ai消除，如果有的话，加个蒙版把除了消除外的部分露出原视频，现在很多花纹很糊",
+      "at": 1793244240000,
+      "author": "冯先生@冯先生",
+      "file": "106.mp4"
+    }
+  ],
+  "perVideo": [
+    {
+      "file": "110.mp4",
+      "episode": 110,
+      "got": 1
+    },
+    {
+      "file": "111.mp4",
+      "episode": 111,
+      "got": 1
+    },
+    {
+      "file": "116.mp4",
+      "episode": 116,
+      "got": 3
+    },
+    {
+      "file": "112.mp4",
+      "episode": 112,
+      "got": 2
+    },
+    {
+      "file": "72.mp4",
+      "episode": 72,
+      "got": 1
+    },
+    {
+      "file": "113.mp4",
+      "episode": 113,
+      "got": 2
+    },
+    {
+      "file": "21.mp4",
+      "episode": 21,
+      "got": 1
+    },
+    {
+      "file": "114.mp4",
+      "episode": 114,
+      "got": 1
+    },
+    {
+      "file": "17.mp4",
+      "episode": 17,
+      "got": 1
+    },
+    {
+      "file": "115.mp4",
+      "episode": 115,
+      "got": 2
+    },
+    {
+      "file": "117.mp4",
+      "episode": 117,
+      "got": 0
+    },
+    {
+      "file": "13.mp4",
+      "episode": 13,
+      "got": 1
+    },
+    {
+      "file": "118.mp4",
+      "episode": 118,
+      "got": 3
+    },
+    {
+      "file": "55.mp4",
+      "episode": 55,
+      "got": 1
+    },
+    {
+      "file": "103.mp4",
+      "episode": 103,
+      "got": 0
+    },
+    {
+      "file": "52.mp4",
+      "episode": 52,
+      "got": 0
+    },
+    {
+      "file": "106.mp4",
+      "episode": 106,
+      "got": 1
+    },
+    {
+      "file": "105.mp4",
+      "episode": 105,
+      "got": 0
+    },
+    {
+      "file": "40.mp4",
+      "episode": 40,
+      "got": 0
+    },
+    {
+      "file": "104.mp4",
+      "episode": 104,
+      "got": 0
+    },
+    {
+      "file": "44.mp4",
+      "episode": 44,
+      "got": 0
+    },
+    {
+      "file": "54.mp4",
+      "episode": 54,
+      "got": 0
+    },
+    {
+      "file": "99.mp4",
+      "episode": 99,
+      "got": 0
+    },
+    {
+      "file": "98.mp4",
+      "episode": 98,
+      "got": 0
+    },
+    {
+      "file": "96.mp4",
+      "episode": 96,
+      "got": 0
+    },
+    {
+      "file": "95.mp4",
+      "episode": 95,
+      "got": 0
+    },
+    {
+      "file": "81.mp4",
+      "episode": 81,
+      "got": 0
+    },
+    {
+      "file": "82.mp4",
+      "episode": 82,
+      "got": 0
+    },
+    {
+      "file": "97.mp4",
+      "episode": 97,
+      "got": 0
+    },
+    {
+      "file": "83.mp4",
+      "episode": 83,
+      "got": 0
+    },
+    {
+      "file": "71.mp4",
+      "episode": 71,
+      "got": 0
+    },
+    {
+      "file": "69.mp4",
+      "episode": 69,
+      "got": 0
+    },
+    {
+      "file": "68.mp4",
+      "episode": 68,
+      "got": 0
+    },
+    {
+      "file": "67.mp4",
+      "episode": 67,
+      "got": 0
+    },
+    {
+      "file": "85.mp4",
+      "episode": 85,
+      "got": 0
+    },
+    {
+      "file": "84.mp4",
+      "episode": 84,
+      "got": 0
+    },
+    {
+      "file": "93.mp4",
+      "episode": 93,
+      "got": 0
+    },
+    {
+      "file": "94.mp4",
+      "episode": 94,
+      "got": 0
+    },
+    {
+      "file": "91.mp4",
+      "episode": 91,
+      "got": 0
+    },
+    {
+      "file": "88.mp4",
+      "episode": 88,
+      "got": 0
+    },
+    {
+      "file": "92.mp4",
+      "episode": 92,
+      "got": 0
+    },
+    {
+      "file": "109.mp4",
+      "episode": 109,
+      "got": 0
+    },
+    {
+      "file": "64.mp4",
+      "episode": 64,
+      "got": 0
+    },
+    {
+      "file": "50.mp4",
+      "episode": 50,
+      "got": 0
+    },
+    {
+      "file": "90.mp4",
+      "episode": 90,
+      "got": 0
+    },
+    {
+      "file": "89.mp4",
+      "episode": 89,
+      "got": 0
+    },
+    {
+      "file": "51.mp4",
+      "episode": 51,
+      "got": 0
+    },
+    {
+      "file": "53.mp4",
+      "episode": 53,
+      "got": 0
+    },
+    {
+      "file": "56.mp4",
+      "episode": 56,
+      "got": 0
+    },
+    {
+      "file": "63.mp4",
+      "episode": 63,
+      "got": 0
+    },
+    {
+      "file": "62.mp4",
+      "episode": 62,
+      "got": 0
+    },
+    {
+      "file": "43.mp4",
+      "episode": 43,
+      "got": 0
+    },
+    {
+      "file": "57.mp4",
+      "episode": 57,
+      "got": 0
+    },
+    {
+      "file": "42.mp4",
+      "episode": 42,
+      "got": 0
+    },
+    {
+      "file": "41.mp4",
+      "episode": 41,
+      "got": 0
+    },
+    {
+      "file": "34.mp4",
+      "episode": 34,
+      "got": 0
+    },
+    {
+      "file": "61.mp4",
+      "episode": 61,
+      "got": 0
+    },
+    {
+      "file": "37.mp4",
+      "episode": 37,
+      "got": 0
+    },
+    {
+      "file": "39.mp4",
+      "episode": 39,
+      "got": 0
+    }
+  ]
+}

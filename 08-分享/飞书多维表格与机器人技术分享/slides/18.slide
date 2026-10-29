@@ -1,0 +1,32 @@
+<Slide style={{ width: 1280, height: 720, background: '#0B1F3A', padding: 60, position: 'relative' }}>
+    {/* 装饰 */}
+    <Box style={{ position: 'absolute', left: 0, top: 0, width: 6, height: 720, background: '#1D4ED8' }} />
+    <Box style={{ position: 'absolute', left: 900, top: 120, width: 320, flexDirection: 'column', gap: 12 }}>
+        <Box style={{ width: 320, height: 6, background: 'rgba(255,255,255,0.10)', borderRadius: 3 }} />
+        <Box style={{ width: 240, height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3 }} />
+        <Box style={{ width: 160, height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3 }} />
+    </Box>
+
+    <Text style={{ fontSize: 14, color: '#8FA3BD', letterSpacing: 2.4, fontFamily: 'Microsoft YaHei' }}>
+        乌小河 · 内部技术分享
+    </Text>
+
+    <Box style={{ position: 'absolute', left: 60, top: 250, width: 1000, flexDirection: 'column' }}>
+        <Text style={{ fontSize: 48, fontWeight: 'bold', color: '#FFFFFF', lineHeight: 1.35, fontFamily: 'Microsoft YaHei' }}>
+            它不需要聪明，<br />只需要每次都不漏
+        </Text>
+        <Text style={{ fontSize: 20, color: '#BFD3FF', lineHeight: 1.7, marginTop: 28, fontFamily: 'Microsoft YaHei' }}>
+            多维表格负责记住，机器人负责跑腿 —— 剩下的判断，还是人的事。
+        </Text>
+        <Box style={{ width: 56, height: 4, background: '#F97316', borderRadius: 2, marginTop: 34 }} />
+    </Box>
+
+    <Box style={{ position: 'absolute', left: 60, top: 594, width: 1160, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+        <Text style={{ fontSize: 15, color: '#8FA3BD', fontFamily: 'Microsoft YaHei' }}>
+            分享人 · 小熊　|　2026 年 10 月 27 日
+        </Text>
+        <Text style={{ fontSize: 15, color: '#8FA3BD', fontFamily: 'Microsoft YaHei' }}>
+            代码与手册：乌小河机器人 / 05-工程
+        </Text>
+    </Box>
+</Slide>

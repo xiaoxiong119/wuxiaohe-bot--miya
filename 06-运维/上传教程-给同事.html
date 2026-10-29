@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { width:1080px; background:#eef1f6; color:#1f2329;
+         font-family:-apple-system,"PingFang SC","Helvetica Neue",Arial,sans-serif; }
+  .poster { width:1080px; background:#fff; padding:56px 56px 48px; }
+  .kicker { color:#3370ff; font-size:15px; font-weight:600; letter-spacing:.5px; }
+  h1 { font-size:46px; letter-spacing:-1px; margin:10px 0 10px; }
+  .lede { color:#5b6270; font-size:17px; line-height:1.7; }
+  .rule { height:1px; background:#e5e7eb; margin:28px 0; }
+
+  .split { display:flex; gap:18px; margin-top:26px; }
+  .col { flex:1; border-radius:16px; padding:22px 24px; border:1px solid #e5e7eb; }
+  .col.small { background:#f3f8ff; border-color:#cfe1ff; }
+  .col.big { background:#fff7f2; border-color:#ffd8c2; }
+  .col .tag { font-size:13px; font-weight:600; letter-spacing:.4px; }
+  .col.small .tag { color:#245bdb; }
+  .col.big .tag { color:#c2410c; }
+  .col .size { font-size:34px; font-weight:700; margin:6px 0 12px; }
+  .col .how { font-size:16px; line-height:1.9; color:#2b2f36; }
+  .col code { background:rgba(0,0,0,.06); padding:2px 7px; border-radius:6px;
+              font-family:ui-monospace,Menlo,monospace; font-size:15px; }
+
+  h2 { font-size:23px; margin:40px 0 16px; display:flex; align-items:center; gap:10px; }
+  .no { display:inline-flex; width:30px; height:30px; border-radius:50%; background:#1f2329; color:#fff;
+        font-size:15px; align-items:center; justify-content:center; }
+  ol { list-style:none; }
+  ol li { position:relative; padding-left:44px; margin-bottom:14px; font-size:16.5px; line-height:1.75; }
+  ol li:before { content:counter(step); counter-increment:step; position:absolute; left:0; top:2px;
+                 width:26px; height:26px; border-radius:8px; background:#eaf1ff; color:#245bdb;
+                 font-size:14px; font-weight:600; display:flex; align-items:center; justify-content:center; }
+  ol { counter-reset:step; }
+  code { font-family:ui-monospace,Menlo,monospace; font-size:16px; background:#f2f3f5;
+          padding:2px 7px; border-radius:6px; }
+  .reply { background:#f7f8fa; border-left:3px solid #3370ff; border-radius:0 10px 10px 0;
+            padding:12px 16px; font-family:ui-monospace,Menlo,monospace; font-size:14.5px;
+            line-height:1.7; color:#2b2f36; margin:10px 0 0 44px; white-space:pre-wrap; }
+
+  .note { background:#fafbfc; border:1px solid #e5e7eb; border-radius:14px; padding:20px 24px; margin-top:16px; }
+  .note b { font-size:16px; }
+  .note p { font-size:15.5px; line-height:1.85; color:#2b2f36; margin-top:6px; }
+  .note .warn { color:#b42318; }
+
+  .faq { margin-top:8px; }
+  .faq .q { font-size:16px; font-weight:600; margin-top:14px; }
+  .faq .a { font-size:15.5px; color:#4e5561; line-height:1.8; margin-top:3px; }
+
+  .quick { margin-top:34px; background:#1f2329; color:#fff; border-radius:16px; padding:24px 26px; }
+  .quick .t { font-size:14px; color:#a9b0bb; letter-spacing:.5px; }
+  .quick p { font-size:16px; line-height:1.95; margin-top:8px; }
+  .quick code { background:rgba(255,255,255,.14); color:#fff; font-size:15px; }
+  .foot { margin-top:22px; color:#8f959e; font-size:13px; line-height:1.8; }
+</style></head><body><div class="poster">
+  <div class="kicker">乌小河 · 使用说明</div>
+  <h1>给乌小河传视频</h1>
+  <p class="lede">它会把视频自动传到分秒帧的《逆天萌兽2》「粗剪」文件夹，并在飞书回你结果。<br>
+  按文件大小选一条路走，别混。</p>
+
+  <div class="split">
+    <div class="col small">
+      <div class="tag">文件 ≤ 100 MB</div>
+      <div class="size">聊天框直发</div>
+      <div class="how">把视频发给乌小河，<br>再发 <code>/upmedia 名字</code></div>
+    </div>
+    <div class="col big">
+      <div class="tag">文件 &gt; 100 MB</div>
+      <div class="size">走云盘收件夹</div>
+      <div class="how">传到共享文件夹，<br>再发 <code>/driveup 名字</code></div>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:18px">
+    <b>100 MB 是飞书接口的硬限制</b>
+    <p>不是机器人挑食，超过的视频它根本下载不下来。硬发会被挡，直接走右边那条路。</p>
+  </div>
+
+  <h2><span class="no">1</span>≤ 100 MB：私聊直发</h2>
+  <ol>
+    <li>打开和<b>乌小河</b>的私聊（群里发它不接）</li>
+    <li>把视频文件发过去，它回：「收到 xxx.mp4。要传的话发：/upmedia 名字」</li>
+    <li>发 <code>/upmedia 71</code></li>
+    <li>传完回你：</li>
+  </ol>
+  <div class="reply">✅ 已上传分秒帧：71.mp4
+列表 116 → 117 项
+https://app.mediatrack.cn/projects/...</div>
+
+  <h2><span class="no">2</span>&gt; 100 MB：云盘收件夹</h2>
+  <ol>
+    <li>打开收件夹：<code>icnbott7dtg3.feishu.cn/drive/folder/HGuFfs…</code></li>
+    <li>点「上传」，等云盘显示 100%</li>
+    <li>回到私聊，发 <code>/driveup 71</code></li>
+    <li>名字写不全也行：<code>/driveup 71</code> 能匹配 <code>71.mov</code>；一次传多个就发 <code>/drive</code> 全扫</li>
+  </ol>
+
+  <div class="note">
+    <b>名字规则</b>
+    <p>名字就是分秒帧里显示的文件名：<code>/upmedia 71</code> → <code>71.mov</code>（沿用原扩展名）。<br>
+    可以中文，比如 <code>/upmedia 71-殷念特写</code>。<b class="warn">同名不覆盖，会并存两份</b>，传之前想好。</p>
+  </div>
+
+  <h2><span class="no">3</span>常见问题</h2>
+  <div class="faq">
+    <div class="q">发了视频没反应？</div>
+    <div class="a">先看文件大小，超过 100 MB 用云盘那条；其余情况找小熊看机器人是不是关了。</div>
+    <div class="q">在群里 @ 它能用吗？</div>
+    <div class="a">不能，现在只开私聊，避免刷屏和误传。</div>
+    <div class="q">传重了怎么办？</div>
+    <div class="a">分秒帧不覆盖，会并存。找小熊在分秒帧里删掉多出来的那条。</div>
+    <div class="q">能传到别的项目吗？</div>
+    <div class="a">不能，目标由小熊统一配。要换项目找他，一条命令就切。</div>
+  </div>
+
+  <div class="quick">
+    <div class="t">一句话版 · 可直接贴群</div>
+    <p>视频交给飞书机器人「乌小河」，它自动传分秒帧。<br>
+    ≤100 MB：私聊发视频，再发 <code>/upmedia 名字</code>。<br>
+    &gt;100 MB：传到云盘收件夹，再发 <code>/driveup 名字</code>；多个用 <code>/drive</code>。<br>
+    名字就是分秒帧里的文件名，同名会并存。它跑在小熊电脑上，他关机就停。</p>
+  </div>
+
+  <div class="foot">更新于 2026-10-27 · 详细版见工作空间 06-运维/上传教程-给同事.md</div>
+</div></body></html>
