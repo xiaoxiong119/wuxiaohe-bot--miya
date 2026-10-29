@@ -1,0 +1,159 @@
+{
+  "ok": true,
+  "identity": "bot",
+  "data": {
+    "count": 10,
+    "items": [
+      {
+        "command": "tbpq",
+        "command_id": "7701925894633311246",
+        "create_time": "1793244363",
+        "description": {
+          "default_value": "同步第二季排期到测试多维表格，按颜色匹配制作师；/tbpq 预览只读检查，不发送人员通知",
+          "i18n": {
+            "zh_cn": "同步排期表（测试项目，人员静默写入）"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1793244363"
+      },
+      {
+        "command": "release",
+        "command_id": "7701602776773561337",
+        "create_time": "1793169131",
+        "description": {
+          "default_value": "把这一版的更新内容发到公告群（仅陈俊杰可用）：/release 发公告、/release status 看现状、/release now 强制重发",
+          "i18n": {
+            "zh_cn": "发版本更新公告到群里"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1793169131"
+      },
+      {
+        "command": "health",
+        "command_id": "7701580537260985363",
+        "create_time": "1793163953",
+        "description": {
+          "default_value": "当场体检：多维表格、表格自动化、bsk、分秒帧目标、长连接、最近上传，八项一起查",
+          "i18n": {
+            "zh_cn": "机器人体检（八项检查）"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1793163953"
+      },
+      {
+        "command": "driveup",
+        "command_id": "7701258364222704631",
+        "create_time": "1793088941",
+        "description": {
+          "default_value": "上传云盘收件夹里的文件（例：/driveup test文件）",
+          "i18n": {
+            "zh_cn": "上传云盘收件夹里的文件（例：/driveup test文件）"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1793088941"
+      },
+      {
+        "command": "drive",
+        "command_id": "7701258359214902257",
+        "create_time": "1793088940",
+        "description": {
+          "default_value": "扫云盘收件夹，或换收件夹",
+          "i18n": {
+            "zh_cn": "扫云盘收件夹，或换收件夹"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1793088940"
+      },
+      {
+        "command": "tbpz",
+        "command_id": "7701246474427829268",
+        "create_time": "1793086173",
+        "description": {
+          "default_value": "分秒帧批注同步到多维表格",
+          "i18n": {
+            "zh_cn": "分秒帧批注同步到多维表格"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1793086173"
+      },
+      {
+        "command": "target",
+        "command_id": "7701246463426186254",
+        "create_time": "1793086171",
+        "description": {
+          "default_value": "看/换分秒帧上传目标",
+          "i18n": {
+            "zh_cn": "看/换分秒帧上传目标"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1793086171"
+      },
+      {
+        "command": "base",
+        "command_id": "7701246458447531033",
+        "create_time": "1793086169",
+        "description": {
+          "default_value": "改多维表格字段（例：把70集的素材生成进展改成已上传）",
+          "i18n": {
+            "zh_cn": "改多维表格字段（例：把70集的素材生成进展改成已上传）"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1793086169"
+      },
+      {
+        "command": "help",
+        "command_id": "7700928659166645239",
+        "create_time": "1793012176",
+        "description": {
+          "default_value": "看乌小河会干什么、怎么用",
+          "i18n": {
+            "zh_cn": "能力与用法说明"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1793012176"
+      },
+      {
+        "command": "upmedia",
+        "command_id": "7700916537737120774",
+        "create_time": "1793009354",
+        "description": {
+          "default_value": "把最新一条视频上传到分秒帧，并重命名为你给的名字（例：/upmedia 67）",
+          "i18n": {
+            "zh_cn": "上传视频到分秒帧并重命名"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1793009354"
+      }
+    ]
+  }
+}

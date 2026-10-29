@@ -1,0 +1,68 @@
+<Slide style={{ width: 1280, height: 720, background: '#FFFFFF', padding: 60, position: 'relative' }}>
+    <Box style={{ flexDirection: 'column' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', letterSpacing: 1.6, fontFamily: 'Microsoft YaHei' }}>
+            03 · 多维表格 × 机器人
+        </Text>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.2, marginTop: 10, fontFamily: 'Microsoft YaHei' }}>
+            一个插件，只有三个函数位置
+        </Text>
+        <Box style={{ width: '100%', height: 1, background: '#E2E8F0', marginTop: 18 }} />
+    </Box>
+
+    <Box style={{ position: 'absolute', left: 60, top: 176 }}>
+        <CodeBlock
+            code={`basekit.addAction({
+  formItems: [                          // 1 · 表格里让人填什么
+    { itemId: 'to',   component: Component.ContactPicker },
+    { itemId: 'text', component: Component.Input },
+  ],
+
+  execute: async (args, context) => {   // 2 · 点下去做什么
+    const { to, text } = args;
+    const url = 'https://open.feishu.cn/open-apis/im/v1/messages';
+    const res = await context.fetch(url + '?receive_id_type=' + kind(to), {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + context.tenantAccessToken },
+      body: JSON.stringify({ receive_id: to.id, msg_type: 'text',
+                             content: JSON.stringify({ text }) }),
+    });
+    return { success: res.ok, messageId: res.data?.message_id };
+  },
+
+  resultType: { success: 'boolean', messageId: 'string' },   // 3 · 出参
+});`}
+            language='typescript'
+            width={670}
+            fontSize={13}
+            theme='github-light'
+            macHeader={true}
+        />
+    </Box>
+
+    {/* 右侧三条要点 */}
+    <Box style={{ position: 'absolute', left: 790, top: 176, width: 430, flexDirection: 'column', gap: 26 }}>
+        {[
+            { no: '01', name: '表单即接口', desc: 'formItems 里的 itemId，就是 execute 收到的参数名。表格里让人填什么，代码里就收什么。' },
+            { no: '02', name: '只有 context.fetch', desc: '线上沙箱不认 axios、sharp、moment —— 只给原生 fetch 和几个基础 API。' },
+            { no: '03', name: '别忘了声明 token', desc: '不写 useTenantAccessToken: true，就拿不到 tenantAccessToken，发消息直接 401。' },
+        ].map((p, i) => (
+            <Box key={i} style={{ flexDirection: 'column' }}>
+                <Box style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
+                    <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#1D4ED8', fontFamily: 'Consolas' }}>{p.no}</Text>
+                    <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#0B1F3A', fontFamily: 'Microsoft YaHei' }}>{p.name}</Text>
+                </Box>
+                <Text style={{ fontSize: 18, color: '#475569', lineHeight: 1.6, marginTop: 6, fontFamily: 'Microsoft YaHei' }}>{p.desc}</Text>
+            </Box>
+        ))}
+        <Box style={{ width: '100%', height: 1, background: '#E2E8F0' }} />
+        <Text style={{ fontSize: 16, color: '#64748B', lineHeight: 1.7, fontFamily: 'Microsoft YaHei' }}>
+            代码不到三十行，真花时间的是打包上传：编译产物传错目录，后台就找不到版本。
+        </Text>
+    </Box>
+
+    {/* 页脚 */}
+    <Box style={{ position: 'absolute', left: 60, top: 670, width: 1160, flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>乌小河 · 技术分享</Text>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>11 / 18</Text>
+    </Box>
+</Slide>

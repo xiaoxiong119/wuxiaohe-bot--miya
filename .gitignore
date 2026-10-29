@@ -1,0 +1,23 @@
+# Secrets and local runtime data
+.env
+**/.env
+node_modules/
+**/node_modules/
+logs/
+**/logs/
+downloads/
+**/downloads/
+inbox/
+**/inbox/
+state/
+**/state/
+*.log
+*.sqlite
+*.db
+*.mp4
+*.mov
+*.m4v
+*.mkv
+*.avi
+*.pyc
+__pycache__/

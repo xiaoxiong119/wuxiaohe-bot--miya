@@ -1,0 +1,62 @@
+<Slide style={{ width: 1280, height: 720, background: '#FFFFFF', padding: 60, position: 'relative' }}>
+    <Box style={{ flexDirection: 'column' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', letterSpacing: 1.6, fontFamily: 'Microsoft YaHei' }}>
+            03 · 多维表格 × 机器人
+        </Text>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.2, marginTop: 10, fontFamily: 'Microsoft YaHei' }}>
+            按钮点下去之后，得有人接住
+        </Text>
+        <Box style={{ width: '100%', height: 1, background: '#E2E8F0', marginTop: 18 }} />
+    </Box>
+
+    {/* 表格容器 */}
+    <Box style={{ position: 'absolute', left: 60, top: 176, width: 1160, height: 372, border: '1px solid #E2E8F0', borderRadius: 12, flexDirection: 'column' }}>
+        <Box style={{ height: 44, flexDirection: 'row', alignItems: 'center', background: '#F8FAFC', borderTopLeftRadius: 12, borderTopRightRadius: 12, paddingLeft: 24, paddingRight: 24 }}>
+            <Text style={{ fontSize: 14, color: '#64748B', width: 180, fontFamily: 'Microsoft YaHei' }}>方案</Text>
+            <Text style={{ fontSize: 14, color: '#64748B', width: 420, fontFamily: 'Microsoft YaHei' }}>怎么做的</Text>
+            <Text style={{ fontSize: 14, color: '#64748B', width: 290, fontFamily: 'Microsoft YaHei' }}>代价</Text>
+            <Text style={{ fontSize: 14, color: '#64748B', width: 220, fontFamily: 'Microsoft YaHei' }}>什么时候用</Text>
+        </Box>
+        {[
+            {
+                name: 'C1 · 卡片回调',
+                how: '常驻消费者收 card.action.trigger，解析按钮 value，调 bitable 改记录，再用回调 token 更新卡片',
+                cost: '要一个稳定消费者；同一应用只能有一个，和消息长连接抢事件',
+                when: '高频、要「一键改状态」的那几步',
+            },
+            {
+                name: 'C2 · 跳表单',
+                how: '按钮 open_url 跳到多维表格表单，提交后由飞书原生写回记录',
+                cost: '要做一张表单；点了还得填一下，不是一键',
+                when: '先让流程当天就能跑起来',
+            },
+            {
+                name: 'C3 · 只跳详情',
+                how: '按钮直接打开这条记录的详情页，人自己找字段改',
+                cost: '零成本，但等于没自动化',
+                when: '低频、只是让人看见这条记录',
+            },
+        ].map((r, i) => (
+            <Box key={i} style={{ height: 109, flexDirection: 'row', borderBottom: '1px solid #EEF2F7', paddingLeft: 24, paddingRight: 24, paddingTop: 18 }}>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1D4ED8', width: 180, fontFamily: 'Microsoft YaHei' }}>{r.name}</Text>
+                <Text style={{ fontSize: 16, color: '#334155', lineHeight: 1.5, width: 420, fontFamily: 'Microsoft YaHei' }}>{r.how}</Text>
+                <Text style={{ fontSize: 16, color: '#475569', lineHeight: 1.5, width: 290, fontFamily: 'Microsoft YaHei' }}>{r.cost}</Text>
+                <Text style={{ fontSize: 16, color: '#475569', lineHeight: 1.5, width: 220, fontFamily: 'Microsoft YaHei' }}>{r.when}</Text>
+            </Box>
+        ))}
+    </Box>
+
+    {/* 底部结论 */}
+    <Box style={{ position: 'absolute', left: 60, top: 588, width: 1160, flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+        <Box style={{ width: 4, height: 22, background: '#F97316', borderRadius: 2 }} />
+        <Text style={{ fontSize: 20, color: '#0B1F3A', lineHeight: 1.5, fontFamily: 'Microsoft YaHei' }}>
+            我们的顺序：<span style={{ color: '#F97316', fontWeight: 'bold' }}>先用 C2 让流程跑起来</span>，再验 C1；实测抢事件，就把它拆到第二个应用上
+        </Text>
+    </Box>
+
+    {/* 页脚 */}
+    <Box style={{ position: 'absolute', left: 60, top: 670, width: 1160, flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>乌小河 · 技术分享</Text>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>12 / 18</Text>
+    </Box>
+</Slide>

@@ -1,0 +1,84 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "count": 5,
+    "items": [
+      {
+        "command": "upmedia",
+        "command_id": "7699694614533491643",
+        "create_time": "1792724853",
+        "description": {
+          "default_value": "把最新一条视频上传到分秒帧",
+          "i18n": {
+            "zh_cn": "上传最新视频到分秒帧"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1792724853"
+      },
+      {
+        "command": "weekly",
+        "command_id": "7699443348788005826",
+        "create_time": "1792666350",
+        "description": {
+          "default_value": "汇总本周工作日志生成周报",
+          "i18n": {
+            "zh_cn": "生成本周周报"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1792666350"
+      },
+      {
+        "command": "kpi",
+        "command_id": "7699443344350465049",
+        "create_time": "1792666349",
+        "description": {
+          "default_value": "按本周工作日志填月度KPI考核表",
+          "i18n": {
+            "zh_cn": "填月度KPI考核表"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1792666349"
+      },
+      {
+        "command": "table",
+        "command_id": "7699443340017667105",
+        "create_time": "1792666348",
+        "description": {
+          "default_value": "查飞书多维表格或电子表格里的数据",
+          "i18n": {
+            "zh_cn": "查飞书表格数据"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1792666348"
+      },
+      {
+        "command": "doc",
+        "command_id": "7699443335265553431",
+        "create_time": "1792666347",
+        "description": {
+          "default_value": "读飞书文档并总结要点",
+          "i18n": {
+            "zh_cn": "读飞书文档并总结要点"
+          }
+        },
+        "icon": {
+          "icon_key": "skill_outlined"
+        },
+        "update_time": "1792666347"
+      }
+    ]
+  }
+}

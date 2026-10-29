@@ -1,0 +1,74 @@
+<Slide style={{ width: 1280, height: 720, background: '#FFFFFF', padding: 60, position: 'relative' }}>
+    <Box style={{ flexDirection: 'column' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', letterSpacing: 1.6, fontFamily: 'Microsoft YaHei' }}>
+            01 · 一件事，要过三道手
+        </Text>
+        <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.2, marginTop: 10, fontFamily: 'Microsoft YaHei' }}>
+            能被接走的活，长着同一副样子
+        </Text>
+        <Box style={{ width: '100%', height: 1, background: '#E2E8F0', marginTop: 18 }} />
+    </Box>
+
+    {/* 主卡：搬运 */}
+    <Box style={{ position: 'absolute', left: 60, top: 168, width: 500, height: 414, border: '1px solid #E2E8F0', borderRadius: 12, padding: 30, flexDirection: 'column' }}>
+        <Text style={{ fontSize: 14, color: '#1D4ED8', letterSpacing: 1.4, fontWeight: 'bold', fontFamily: 'Microsoft YaHei' }}>01 · 搬运</Text>
+        <Text style={{ fontSize: 26, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.3, marginTop: 14, fontFamily: 'Microsoft YaHei' }}>
+            文件从 A 挪到 B，名字顺手改对
+        </Text>
+        <Box style={{ flexDirection: 'column', gap: 20, marginTop: 26 }}>
+            <Box style={{ flexDirection: 'row', gap: 12 }}>
+                <Box style={{ width: 3, height: 64, background: '#DBEAFE', borderRadius: 2 }} />
+                <Text style={{ fontSize: 18, color: '#475569', lineHeight: 1.6, width: 420, fontFamily: 'Microsoft YaHei' }}>
+                    聊天里的粗剪视频 → 分秒帧「粗剪」文件夹，落盘就叫 67.mp4
+                </Text>
+            </Box>
+            <Box style={{ flexDirection: 'row', gap: 12 }}>
+                <Box style={{ width: 3, height: 64, background: '#DBEAFE', borderRadius: 2 }} />
+                <Text style={{ fontSize: 18, color: '#475569', lineHeight: 1.6, width: 420, fontFamily: 'Microsoft YaHei' }}>
+                    云盘收件夹整批 → 一个 /drive 扫一遍，传完接着传下一个
+                </Text>
+            </Box>
+        </Box>
+        <Box style={{ flex: 1 }} />
+        <Box style={{ width: '100%', height: 1, background: '#E2E8F0' }} />
+        <Text style={{ fontSize: 16, color: '#94A3B8', lineHeight: 1.6, marginTop: 14, fontFamily: 'Microsoft YaHei' }}>
+            前提：来源位置固定、目标位置固定、命名规则固定
+        </Text>
+    </Box>
+
+    {/* 右侧两张副卡 */}
+    <Box style={{ position: 'absolute', left: 600, top: 168, width: 620, flexDirection: 'column', gap: 24 }}>
+        <Box style={{ height: 195, background: '#F8FAFC', borderRadius: 12, padding: 26, flexDirection: 'column' }}>
+            <Text style={{ fontSize: 14, color: '#3B82F6', letterSpacing: 1.4, fontWeight: 'bold', fontFamily: 'Microsoft YaHei' }}>02 · 回写</Text>
+            <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.3, marginTop: 10, fontFamily: 'Microsoft YaHei' }}>
+                把结论写进字段，人不用再抄
+            </Text>
+            <Text style={{ fontSize: 18, color: '#475569', lineHeight: 1.6, marginTop: 8, fontFamily: 'Microsoft YaHei' }}>
+                /base 把 70 集的「素材生成进展」改成已上传 · /tbpz 把批注落到记录
+            </Text>
+        </Box>
+        <Box style={{ height: 195, background: '#F8FAFC', borderRadius: 12, padding: 26, flexDirection: 'column' }}>
+            <Text style={{ fontSize: 14, color: '#3B82F6', letterSpacing: 1.4, fontWeight: 'bold', fontFamily: 'Microsoft YaHei' }}>03 · 通知</Text>
+            <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#0B1F3A', lineHeight: 1.3, marginTop: 10, fontFamily: 'Microsoft YaHei' }}>
+                表里一变，人就收到
+            </Text>
+            <Text style={{ fontSize: 18, color: '#475569', lineHeight: 1.6, marginTop: 8, fontFamily: 'Microsoft YaHei' }}>
+                进度进入「待一审」→ 卡片进项目群，按钮点一下改状态
+            </Text>
+        </Box>
+    </Box>
+
+    {/* 底部结论 */}
+    <Box style={{ position: 'absolute', left: 60, top: 600, width: 1160, flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+        <Box style={{ width: 4, height: 22, background: '#F97316', borderRadius: 2 }} />
+        <Text style={{ fontSize: 20, color: '#0B1F3A', lineHeight: 1.5, fontFamily: 'Microsoft YaHei' }}>
+            反过来，要审美判断的、要找人商量的、只做一次的活，<span style={{ color: '#F97316', fontWeight: 'bold' }}>先别交出去</span>
+        </Text>
+    </Box>
+
+    {/* 页脚 */}
+    <Box style={{ position: 'absolute', left: 60, top: 670, width: 1160, flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>乌小河 · 技术分享</Text>
+        <Text style={{ fontSize: 14, color: '#94A3B8', fontFamily: 'Microsoft YaHei' }}>05 / 18</Text>
+    </Box>
+</Slide>
