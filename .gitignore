@@ -21,3 +21,29 @@ state/
 *.avi
 *.pyc
 __pycache__/
+
+# WorkBuddy 工作区元数据（内部备忘、会话 id，只在本地）
+.workbuddy/
+**/.workbuddy/
+.DS_Store
+**/.DS_Store
+
+# 运行时状态、锁文件、备份（本地才有意义）
+*.pid
+.bot.lock
+**/.bot.lock
+backups/
+**/backups/
+*.bak-*
+**/admin-*.json
+**/state.json
+**/drive-state.json
+**/flow-state.json
+**/releases.json
+**/release-draft.json
+**/daemon-state.json
+**/tbpz-sync-log.jsonl
+
+# 含真实 app secret / 群 id 的本地配置（仓库只留 .env.example / bot-info.json 脱敏版）
+05-工程/video-bot/config.json
+01-身份/app-info.json
