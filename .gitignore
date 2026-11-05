@@ -47,3 +47,8 @@ backups/
 # 含真实 app secret / 群 id 的本地配置（仓库只留 .env.example / bot-info.json 脱敏版）
 05-工程/video-bot/config.json
 01-身份/app-info.json
+
+# 飞书表格导出 / 运行报告（业务数据，只在本地）
+tbl*.ndjson
+tbl*.manifest.json
+**/reports/

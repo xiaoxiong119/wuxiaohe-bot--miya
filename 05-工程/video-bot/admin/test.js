@@ -1,0 +1,21 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'bot-admin-'));process.env.ADMIN_TEST_ROOT=root;process.env.ADMIN_PORT='18766';
+const config=path.join(root,'config.json');fs.writeFileSync(config,JSON.stringify({projectUrl:'https://app.mediatrack.cn/projects/123/files',privateNotificationOptOut:[{name:'已有人员',openId:'ou_existing123'}],scheduleSync:{people:{x:{name:'测试人员',id:'ou_person123'}}},untouched:{keep:true}}));
+const {patch,state,server}=require('./server');
+(async()=>{try{
+ let s=state();assert.equal(s.people.length,2);assert.equal(s.status.running,false);
+ await patch({revision:s.revision,kind:'person',name:'测试人员',openId:'ou_person123',enabled:false});
+ assert.equal(state().people.find(p=>p.openId==='ou_person123').enabled,false);
+ await assert.rejects(patch({revision:s.revision,kind:'person',name:'测试人员',openId:'ou_person123',enabled:true}),/配置已被/);
+ s=state();await patch({revision:s.revision,kind:'person',name:'测试人员',openId:'ou_person123',enabled:true});assert.equal(state().people.find(p=>p.openId==='ou_person123').enabled,true);
+ s=state();await assert.rejects(patch({revision:s.revision,kind:'link',key:'projectUrl',value:'https://evil.example/projects/123/files'}),/分秒帧/);
+ await assert.rejects(patch({revision:s.revision,kind:'link',key:'__proto__.polluted',value:'https://x.com'}),/不支持/);
+ await patch({revision:s.revision,kind:'link',key:'projectUrl',value:'https://app.mediatrack.cn/projects/456/files?path=789'});
+ const final=JSON.parse(fs.readFileSync(config));assert.equal(final.untouched.keep,true);assert.equal(final.privateNotificationOptOut[0].name,'已有人员');assert.equal(fs.readdirSync(path.join(root,'backups/admin')).length,3);
+ await new Promise(r=>server.listen(18766,'127.0.0.1',r));const page=await fetch('http://127.0.0.1:18766/');const html=await page.text();const token=/const TOKEN='([a-f0-9]+)'/.exec(html)[1];
+ assert.equal((await fetch('http://127.0.0.1:18766/api/state')).status,403);
+ assert.equal((await fetch('http://127.0.0.1:18766/api/state',{headers:{'X-Admin-Token':token}})).status,200);
+ assert.equal((await fetch('http://127.0.0.1:18766/api/state',{headers:{'X-Admin-Token':token,Origin:'https://evil.example'}})).status,403);
+ assert.equal((await fetch('http://127.0.0.1:18766/api/logs?file=../.env',{headers:{'X-Admin-Token':token}})).status,400);
+ console.log('PASS: 通知双向开关、并发冲突、链接校验、字段保留、备份、接口鉴权、跨站拦截、日志路径限制');
+ }finally{server.close();fs.rmSync(root,{recursive:true,force:true});}})().catch(e=>{console.error(e);process.exitCode=1});

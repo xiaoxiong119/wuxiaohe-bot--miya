@@ -19,6 +19,7 @@ const target = require('./target');
 const C = require('./cards');
 const { getClient, withTimeout, sendCardTo, sendInteractive } = require('./feishu');
 const { log, errorLines } = require('./log');
+const PC = require('./project-context');
 
 const B = cfg.BASE || {};
 const OWNER_OPEN_ID = (cfg.INBOX && cfg.INBOX.notifyOpenId) || '';
@@ -29,7 +30,7 @@ let lastReport = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 多维表格：读表 + 字段完整性（审阅流程要用的那几个单选必须还在） */
-async function checkBitable() {
+async function checkBitableInner() {
   const t0 = Date.now();
   try {
     const fields = await withTimeout(bitable.listFields(), 10000, '字段列表');
@@ -59,11 +60,31 @@ async function checkBitable() {
     return {
       name: '多维表格读取',
       ok: true,
-      detail: `${names.length} 个字段、${total} 条记录，${ms} ms`,
+      detail: `${PC.current().name || ''}${names.length} 个字段、${total} 条记录，${ms} ms`,
     };
   } catch (e) {
     return { name: '多维表格读取', ok: false, detail: `${(e && e.message) || e}` };
   }
+}
+
+/** 体检查「巡检真正在用的那张表」（config.flow.projects 第一个），没配就查默认表 */
+async function checkBitable() {
+  const key = flowProjectKey();
+  if (!key) return checkBitableInner();
+  try {
+    return await PC.run(key, checkBitableInner);
+  } catch (e) {
+    return { name: '多维表格读取', ok: false, detail: `${key}：${(e && e.message) || e}` };
+  }
+}
+
+function flowProjectKey() {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(cfg.ROOT, 'config.json'), 'utf8'));
+    const list = c.flow && c.flow.projects;
+    if (Array.isArray(list) && list.length) return list[0];
+  } catch (e) { /* 读不到就按默认表 */ }
+  return null;
 }
 
 /** 表格自动化：最近一次巡检有没有成功、有没有报错 */
@@ -101,7 +122,7 @@ function checkDailySelfTest() {
 /** bsk：上传分秒帧靠它驱动本机 Chrome */
 function checkBsk() {
   try {
-    const r = spawnSync('/Users/fanxiaoli/.local/bin/bsk', ['status', '--json'], {
+    const r = spawnSync(path.join(process.env.HOME, '.local/bin/bsk'), ['status', '--json'], {
       timeout: 8000,
       encoding: 'utf8',
       env: { ...process.env, BSK_AUTO_START: '0' },
@@ -235,7 +256,7 @@ async function report(meta, why) {
     log('整点体检：没配 inbox.notifyOpenId，发不出去');
     return false;
   }
-  const sent = await withTimeout(sendCardTo(OWNER_OPEN_ID, card), 10000, '发体检卡');
+  const sent = await withTimeout(require('./notification-policy').context.run('health', () => sendCardTo(OWNER_OPEN_ID, card)), 10000, '发体检卡');
   log(`整点体检${sent ? '已发' : '没发出去'}：${ok ? '全部正常' : checks.filter((c) => !c.ok).map((c) => c.name).join('、')}`);
   return sent;
 }

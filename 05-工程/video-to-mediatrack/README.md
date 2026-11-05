@@ -11,7 +11,7 @@
 ## 启动 / 停止
 
 ```bash
-cd /Users/fanxiaoli/WorkBuddy/乌小河机器人/05-工程/video-to-mediatrack
+cd ~/WorkBuddy/乌小河机器人/05-工程/video-to-mediatrack
 ./start.sh    # 启动 bsk 浏览器服务 + daemon 监听
 ./stop.sh     # 只停 daemon；加 --with-bsk 连 bsk 一起停
 ```
@@ -34,7 +34,7 @@ cd /Users/fanxiaoli/WorkBuddy/乌小河机器人/05-工程/video-to-mediatrack
 **命令行**：
 
 ```bash
-cd /Users/fanxiaoli/WorkBuddy/乌小河机器人/05-工程/video-to-mediatrack
+cd ~/WorkBuddy/乌小河机器人/05-工程/video-to-mediatrack
 
 node run.js                  # 取乌小河私聊/群里最新一条视频消息，立刻下载并上传
 node watch.js                # 等待模式：等下一个新视频（/upmedia 用的就是这个）

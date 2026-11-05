@@ -82,11 +82,13 @@ function flatValue(v) {
  * 例：把70集的素材生成进展改成已上传
  */
 function parseEdit(text) {
-  const ep = /(\d{1,4})\s*集/.exec(text);
+  const ep = /(?:第)?(\d{1,4})(?:[-_](\d+))?\s*集/.exec(text) || /(\d{1,4})[-_](\d+)/.exec(text);
+  const sc = /第?\s*(\d+)\s*场/.exec(text);
   const field = (B.writableFields || []).find((f) => text.includes(f)) || '';
   const vm = /(?:改成|改为|设为|设成|标记为|更新为|变成|调成)\s*[「“"'《]?([^「」“”"'《》，,。；;！!\s]+)/.exec(text);
   return {
     episode: ep ? ep[1] : '',
+    scene: ep?.[2] || sc?.[1] || '',
     field,
     value: vm ? vm[1] : '',
   };
@@ -109,7 +111,7 @@ function matchOption(input, options) {
 async function editField(text) {
   if (!ready()) return '多维表格还没配（config.json 里缺 base 段）。';
 
-  const { episode, field, value } = parseEdit(text);
+  const { episode, scene, field, value } = parseEdit(text);
   if (!episode) return `没看出要改哪一集，说清「第几集」，比如：${'/base'} 把 70 集的素材生成进展改成已上传`;
   if (!field) {
     return `没认出要改哪个字段。可改的：${(B.writableFields || []).join(' / ')}`;
@@ -125,28 +127,32 @@ async function editField(text) {
     return `「${value}」不是「${field}」的选项。可选：${target.options.join(' / ') || '（非单选字段）'}`;
   }
 
-  const records = await findRecords(episode);
+  let records = await findRecords(episode);
+  if (scene) records = records.filter(r => Number(flatValue(r.fields?.['场次'])) === Number(scene));
+  if (!scene && require('./project-context').current().sceneMode) return '请明确场次，例如：逆天萌兽3 把64-1集的素材生成进展改成修改中';
   if (!records.length) return `没找到 ${episode} 集的记录（按「${B.episodeField}」查的）。`;
 
   let record = records[0];
   if (records.length > 1) {
     const names = records.map((r) => personNames(r).join('、') || '(空)');
-    const hit = records.find((r) => personNames(r).some((n) => text.includes(n)));
+    const hits = records.filter((r) => personNames(r).some((n) => text.includes(n)));
+    const hit = hits.length === 1 ? hits[0] : null;
     if (!hit) {
       return `${episode} 集有 ${records.length} 条记录，分别属于：${names.join(' / ')}。\n请带上名字再说一次。`;
     }
     record = hit;
   }
 
+  const taskLabel = `${episode}${scene ? '-' + scene : ''}`;
   const before = flatValue((record.fields || {})[field]);
   if (before === val) {
-    return `${episode} 集的${field}本来就是「${val}」，没动。`;
+    return `${taskLabel} 集的${field}本来就是「${val}」，没动。`;
   }
 
   await updateRecord(record.record_id, { [field]: val });
   const who = personNames(record).join('、');
-  log(`改表：${episode} 集（${who}）${field} ${before || '空'} → ${val}`);
-  return `✅ 已改：${episode} 集${who ? `（${who}）` : ''} · ${field}：${before || '空'} → ${val}`;
+  log(`改表：${taskLabel} 集（${who}）${field} ${before || '空'} → ${val}`);
+  return `✅ 已改：${taskLabel} 集${who ? `（${who}）` : ''} · ${field}：${before || '空'} → ${val}`;
 }
 
 module.exports = { ready, listFields, findRecords, updateRecord, createRecord, parseEdit, matchOption, editField, flatValue, personNames };

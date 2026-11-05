@@ -32,6 +32,13 @@ if [ -f "$VB/bot.pid" ] && kill -0 "$(cat "$VB/bot.pid")" 2>/dev/null; then
 else
   bad "video-bot 没起 —— 终端跑 $VB/start.sh"
 fi
+if launchctl print "gui/$(id -u)/com.wuxiaohe.videobot" >/dev/null 2>&1; then
+  ok "开机自启：已加载（launchd 在管）"
+elif [ -f "$HOME/Library/LaunchAgents/com.wuxiaohe.videobot.plist" ]; then
+  warn "开机自启：已装未加载（下次登录生效；跑一次 $VB/start.sh 可立即加载）"
+else
+  warn "开机自启：没装"
+fi
 if [ -f "$VB/logs/bot.log" ]; then
   echo "  · 日志最后写入：$(date -r "$VB/logs/bot.log" '+%m-%d %H:%M')"
   echo "  · 末行：$(tail -n 1 "$VB/logs/bot.log" | cut -c1-88)"
@@ -51,8 +58,10 @@ echo
 echo "【历史链路 · 旧 daemon】"
 if [ -f "$VM/daemon.pid" ] && kill -0 "$(cat "$VM/daemon.pid")" 2>/dev/null; then
   warn "还在跑（pid $(cat "$VM/daemon.pid")）—— 两条链路同时跑会重复上传，建议 ./stop.sh 停掉"
+elif pgrep -f 'video-to-mediatrack/daemon\.js|wuxiaohe-upmedia/daemon\.js' >/dev/null 2>&1; then
+  warn "有 daemon.js 在跑（pid $(pgrep -f 'video-to-mediatrack/daemon\.js|wuxiaohe-upmedia/daemon\.js' | tr '\n' ' ')）—— 重复上传风险，先停掉"
 else
-  echo "  · 未运行（正常，已由新机器人接管）"
+  echo "  · 未运行（正常；2026-10-30 已摘掉它的 launchd 自启任务）"
 fi
 
 echo

@@ -56,9 +56,9 @@ for i in $(seq 1 80); do
     STOP=$(SINCE_MS="$SINCE_MS" python3 - "$TMP/names.jsonl" <<'PYEOF'
 import json, sys, os
 from datetime import datetime
-since = datetime.fromtimestamp(int(os.environ['SINCE_MS']) / 1000).strftime('%Y-%m-%d %H:%M')
+since = datetime.fromtimestamp(int(os.environ['SINCE_MS']) / 1000 - 600).strftime('%Y-%m-%d %H:%M')
 best = ''
-for line in open(sys.argv[1]):
+for line in list(open(sys.argv[1]))[-1:]:
     line = line.strip()
     if not line:
         continue
@@ -70,7 +70,7 @@ for line in open(sys.argv[1]):
         t = x.get('t') or ''
         if t > best:
             best = t
-# 本轮见过的最新时间都老于 since → 边界已过，可以停
+# 当前屏最新时间老于 since（含10分钟重叠） → 边界已过，可以停
 print('STOP' if best and best < since else 'GO')
 PYEOF
 )
@@ -155,7 +155,7 @@ for i, l in enumerate(lines):
         note_files.append(fname)
 
 for n in note_files:
-    if n in order or not is_video(n):
+    if any(t[0] == n for t in targets) or not is_video(n):
         continue
     order[n] = {'idx': len(order), 'count': 0, 't': ''}
     targets.append((n, -1, 0))

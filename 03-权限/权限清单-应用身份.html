@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><style>
+  * { box-sizing:border-box; }
+  body { margin:0; background:#eef0f4; color:#1f2329;
+         font-family:-apple-system,"PingFang SC","Helvetica Neue",Arial,sans-serif; }
+  .wrap { max-width:1240px; margin:28px auto; padding:48px 44px 60px; background:#fff;
+           border-radius:18px; box-shadow:0 2px 18px rgba(31,35,41,.08); }
+  h1 { font-size:40px; margin:0 0 8px; letter-spacing:-.6px; }
+  .sub { color:#646a73; font-size:14px; }
+  .stats { display:flex; gap:14px; margin:28px 0 8px; }
+  .stat { flex:1; background:#f7f8fa; border:1px solid #e5e6eb; border-radius:12px; padding:16px 18px; }
+  .stat .n { font-size:32px; font-weight:700; line-height:1.1; }
+  .stat .t { color:#646a73; font-size:12.5px; margin-top:6px; }
+  .stat.hi { background:#fff7f5; border-color:#f7d8cf; }
+  .stat.hi .n { color:#d4380d; }
+  h2 { font-size:20px; margin:38px 0 14px; padding-left:11px; border-left:4px solid #3370ff; }
+  .bound { display:flex; gap:16px; }
+  .col { flex:1; border-radius:12px; padding:16px 20px; border:1px solid #e5e6eb; }
+  .col.ok { background:#f3fbf6; border-color:#c9ecd6; }
+  .col.no { background:#fff6f6; border-color:#f6d2d2; }
+  .col h3 { margin:0 0 8px; font-size:15px; }
+  .col ul { margin:0; padding-left:19px; }
+  .col li { font-size:13.5px; line-height:1.9; }
+  table { width:100%; max-width:1060px; margin:8px auto 0; border-collapse:collapse; font-size:13px; }
+  thead th { background:#fafbfc; color:#646a73; text-align:left; font-weight:600;
+             padding:9px 10px; border-bottom:1px solid #e5e6eb; font-size:12px; }
+  tr.sect td { background:#f2f4f8; padding:9px 10px; border-top:1px solid #e5e6eb; font-size:13.5px; }
+  .mc { color:#646a73; font-size:12px; margin-left:8px; }
+  .mk { float:right; color:#8f959e; font-size:11px; font-family:ui-monospace,Menlo,monospace; }
+  td { padding:7px 10px; border-bottom:1px solid #f0f1f3; vertical-align:top; }
+  td.sc { width:330px; font-family:ui-monospace,Menlo,monospace; font-size:12px; color:#245bdb; }
+  td.lv { width:76px; text-align:right; }
+  tr.w td.sc { color:#b42318; }
+  .chip { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; }
+  .chip.lo { background:#e8f3ff; color:#245bdb; }
+  .chip.hi { background:#fff1f0; color:#d4380d; }
+  .foot { margin-top:26px; color:#8f959e; font-size:12px; line-height:1.8; }
+</style></head><body><div class="wrap">
+  <h1>乌小河 · 权限清单</h1>
+  <div class="sub">应用身份（tenant_access_token）· 用户身份 0 项 · App ID [已脱敏] · 导出于 2026-10-27 14:41</div>
+
+  <div class="stats">
+    <div class="stat"><div class="n">109</div><div class="t">权限总数</div></div>
+    <div class="stat"><div class="n">12</div><div class="t">涉及模块</div></div>
+    <div class="stat"><div class="n">16</div><div class="t">普通权限</div></div>
+    <div class="stat hi"><div class="n">93</div><div class="t">高级权限</div></div>
+  </div>
+
+  <h2>应用身份的边界</h2>
+  <div class="bound">
+    <div class="col ok"><h3>能做</h3><ul>
+      <li>读用户私聊发给它的消息、群里 @ 它的消息</li>
+      <li>下载这些消息里的附件（≤ 100 MB）</li>
+      <li>以「乌小河」名义发消息、发交互卡片</li>
+      <li>读别人分享给它的云文档 / 表格 / 多维表格</li>
+      <li>新增、修改它有权编辑的多维表格记录</li>
+      <li>读分享给它的云盘文件夹，列目录、下文件</li>
+    </ul></div>
+    <div class="col no"><h3>做不到</h3><ul>
+      <li>读通讯录、组织架构、别人的聊天记录</li>
+      <li>读没分享给它的文档、表格、文件夹</li>
+      <li>冒充人发消息（没有 send_as_user）</li>
+      <li>访问其他租户的资源，跨租户一律 403</li>
+      <li>在它没被拉进去的群里说话</li>
+      <li>脱离这台 Mac 独立运行（进程停了就不干活）</li>
+    </ul></div>
+  </div>
+
+  <h2>逐项明细</h2>
+  <table>
+    <thead><tr><th>权限标识（scope）</th><th>说明</th><th>等级</th></tr></thead>
+    <tbody><tr class="sect"><td colspan="3"><b>多维表格 Base</b><span class="mc">44 项</span><span class="mk">base</span></td></tr>
+<tr class="w"><td class="sc">base:app:copy</td><td class="ds">复制多维表格</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:app:create</td><td class="ds">创建多维表格</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:app:read</td><td class="ds">获取多维表格信息</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:app:update</td><td class="ds">更新多维表格</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:appmode:create</td><td class="ds">新建多维表格应用</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:appmode:read</td><td class="ds">查看多维表格应用</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:appmode_block:create</td><td class="ds">新建多维表格应用组件</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:appmode_block:read</td><td class="ds">查看多维表格应用组件</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:appmode_block:update</td><td class="ds">更新多维表格应用组件</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:appmode_page:create</td><td class="ds">新建多维表格应用页面</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:appmode_page:read</td><td class="ds">查看多维表格应用页面</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:appmode_page:update</td><td class="ds">更新多维表格应用页面</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:block:create</td><td class="ds">创建多维表格组件</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr><td class="sc">base:block:read</td><td class="ds">读取多维表格组件</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr><td class="sc">base:block:update</td><td class="ds">更新多维表格组件</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr class="w"><td class="sc">base:dashboard:create</td><td class="ds">创建仪表盘</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:dashboard:read</td><td class="ds">获取仪表盘信息</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:dashboard:update</td><td class="ds">更新仪表盘</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:field:create</td><td class="ds">新增字段</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:field:read</td><td class="ds">获取字段信息</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:field:update</td><td class="ds">更新字段</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:form:create</td><td class="ds">创建表单问卷</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:form:read</td><td class="ds">获取表单数据</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:form:update</td><td class="ds">更新表单数据</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:history:read</td><td class="ds">读取多维表格历史记录</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:record:create</td><td class="ds">新增记录</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:record:read</td><td class="ds">检索特定记录</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:record:retrieve</td><td class="ds">根据条件搜索记录</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:record:update</td><td class="ds">更新记录</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:role:create</td><td class="ds">新增自定义角色</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:role:read</td><td class="ds">查询自定义角色</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:role:update</td><td class="ds">更新自定义角色</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:table:create</td><td class="ds">新增数据表</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:table:read</td><td class="ds">获取数据表信息</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:table:update</td><td class="ds">更新数据表</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:template:read</td><td class="ds">读取多维表格模板</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr><td class="sc">base:view:read</td><td class="ds">检索视图</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:view:write_only</td><td class="ds">新增、更新、删除视图</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:workflow:create</td><td class="ds">创建自动化流程/工作流</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:workflow:read</td><td class="ds">查看自动化流程/工作流</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:workflow:update</td><td class="ds">更新自动化流程/工作流</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">base:workspace:create</td><td class="ds">新建多维表格空间</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:workspace:read</td><td class="ds">查看多维表格空间</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">base:workspace:update</td><td class="ds">更新多维表格空间</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="sect"><td colspan="3"><b>云文档（旧版接口）</b><span class="mc">15 项</span><span class="mk">docs</span></td></tr>
+<tr class="w"><td class="sc">docs:document.comment:create</td><td class="ds">添加、回复云文档中的评论</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">docs:document.comment:read</td><td class="ds">获取云文档中的评论</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">docs:document.comment:update</td><td class="ds">修改云文档中的评论</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">docs:document.content:read</td><td class="ds">查看云文档内容</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">docs:document.media:download</td><td class="ds">下载云文档中的图片和附件</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">docs:document.media:upload</td><td class="ds">上传图片和附件到云文档中</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">docs:document:copy</td><td class="ds">复制云文档</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">docs:document:export</td><td class="ds">导出云文档</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">docs:document:import</td><td class="ds">查看、创建云文档导入任务</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">docs:permission.member:auth</td><td class="ds">判断当前用户是否有云文档权限</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">docs:permission.member:create</td><td class="ds">添加云文档协作者</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">docs:permission.member:retrieve</td><td class="ds">查看云文档的协作者列表</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">docs:permission.member:transfer</td><td class="ds">转移云文档的所有权</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">docs:permission.setting:read</td><td class="ds">查询云文档权限设置</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">docs:permission.setting:write_only</td><td class="ds">修改云文档权限设置</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="sect"><td colspan="3"><b>知识库 Wiki</b><span class="mc">11 项</span><span class="mk">wiki</span></td></tr>
+<tr class="w"><td class="sc">wiki:member:create</td><td class="ds">新增知识空间成员</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">wiki:member:retrieve</td><td class="ds">查看知识空间成员列表</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">wiki:member:update</td><td class="ds">更新知识空间成员</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">wiki:node:copy</td><td class="ds">创建知识空间节点副本</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">wiki:node:create</td><td class="ds">创建知识空间节点</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">wiki:node:move</td><td class="ds">移动知识空间节点</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">wiki:node:read</td><td class="ds">查看知识空间节点信息</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">wiki:node:retrieve</td><td class="ds">查看知识空间节点列表</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">wiki:space:read</td><td class="ds">查看知识空间信息</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">wiki:space:retrieve</td><td class="ds">查看知识空间列表</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">wiki:space:write_only</td><td class="ds">创建、更新知识空间</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="sect"><td colspan="3"><b>任务</b><span class="mc">8 项</span><span class="mk">task</span></td></tr>
+<tr class="w"><td class="sc">task:attachment:write</td><td class="ds">查看、创建、删除任务附件</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">task:comment:write</td><td class="ds">查看、创建、更新、删除任务评论</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">task:custom_field:read</td><td class="ds">查看自定义字段信息</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr class="w"><td class="sc">task:custom_field:write</td><td class="ds">查看、创建、更新自定义字段</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr><td class="sc">task:section:read</td><td class="ds">查看自定义分组</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr class="w"><td class="sc">task:section:write</td><td class="ds">查看、创建、更新、删除自定义分组</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">task:task:read</td><td class="ds">查看任务信息</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr><td class="sc">task:tasklist:read</td><td class="ds">查看任务清单</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr class="sect"><td colspan="3"><b>消息与群组</b><span class="mc">6 项</span><span class="mk">im</span></td></tr>
+<tr><td class="sc">im:chat:read</td><td class="ds">查看群信息</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">im:message.group_at_msg:readonly</td><td class="ds">获取群组中用户@机器人消息</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr><td class="sc">im:message.p2p_msg:readonly</td><td class="ds">读取用户发给机器人的单聊消息</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr><td class="sc">im:message:readonly</td><td class="ds">获取单聊、群组消息</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr><td class="sc">im:message:send_as_bot</td><td class="ds">以应用的身份发消息</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr><td class="sc">im:resource</td><td class="ds">获取与上传图片或文件资源 </td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="sect"><td colspan="3"><b>电子表格</b><span class="mc">5 项</span><span class="mk">sheets</span></td></tr>
+<tr><td class="sc">sheets:spreadsheet.meta:read</td><td class="ds">查询电子表格元信息</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">sheets:spreadsheet.meta:write_only</td><td class="ds">修改电子表格元信息</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">sheets:spreadsheet:create</td><td class="ds">创建电子表格</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">sheets:spreadsheet:read</td><td class="ds">查看电子表格</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">sheets:spreadsheet:write_only</td><td class="ds">编辑电子表格</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="sect"><td colspan="3"><b>云空间文件夹</b><span class="mc">4 项</span><span class="mk">space</span></td></tr>
+<tr class="w"><td class="sc">space:document:move</td><td class="ds">移动云空间文件夹和云文档</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">space:document:retrieve</td><td class="ds">获取云空间文件夹下的云文档清单</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">space:document:shortcut</td><td class="ds">创建云文档的快捷方式</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">space:folder:create</td><td class="ds">创建云空间文件夹</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="sect"><td colspan="3"><b>云空间 Drive</b><span class="mc">4 项</span><span class="mk">drive</span></td></tr>
+<tr><td class="sc">drive:drive.metadata:readonly</td><td class="ds">查看云空间中文件元数据</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">drive:file:download</td><td class="ds">下载云空间下的文件</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">drive:file:upload</td><td class="ds">上传文件</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">drive:file:view_record:readonly</td><td class="ds">获取文档访问记录</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="sect"><td colspan="3"><b>幻灯片</b><span class="mc">4 项</span><span class="mk">slides</span></td></tr>
+<tr class="w"><td class="sc">slides:presentation:create</td><td class="ds">创建幻灯片</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">slides:presentation:read</td><td class="ds">查看幻灯片</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">slides:presentation:update</td><td class="ds">编辑幻灯片</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">slides:presentation:write_only</td><td class="ds">创建及编辑幻灯片</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="sect"><td colspan="3"><b>应用自身</b><span class="mc">3 项</span><span class="mk">application</span></td></tr>
+<tr><td class="sc">application:app_slash_command:read</td><td class="ds">查询 Slash Command</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr class="w"><td class="sc">application:app_slash_command:write</td><td class="ds">编辑 Slash Command</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr><td class="sc">application:application:self_manage</td><td class="ds">管理应用自身资源</td><td class="lv"><span class="chip lo">普通</span></td></tr>
+<tr class="sect"><td colspan="3"><b>云文档 Docx</b><span class="mc">3 项</span><span class="mk">docx</span></td></tr>
+<tr class="w"><td class="sc">docx:document:create</td><td class="ds">创建新版文档</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">docx:document:readonly</td><td class="ds">查看新版文档</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="w"><td class="sc">docx:document:write_only</td><td class="ds">编辑新版文档</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr class="sect"><td colspan="3"><b>画板</b><span class="mc">2 项</span><span class="mk">board</span></td></tr>
+<tr class="w"><td class="sc">board:whiteboard:node:create</td><td class="ds">创建画板节点</td><td class="lv"><span class="chip hi">高级</span></td></tr>
+<tr><td class="sc">board:whiteboard:node:read</td><td class="ds">查看画板节点</td><td class="lv"><span class="chip hi">高级</span></td></tr></tbody>
+  </table>
+
+  <div class="foot">
+    红色 scope 含写 / 删 / 移动 / 授权类动作，是这套权限里风险较高的部分，回收时优先看这些。<br>
+    数据来源：飞书开放平台「获取应用信息」接口实时读取，中文说明与权限等级均为接口原文，非人工整理。
+  </div>
+</div></body></html>

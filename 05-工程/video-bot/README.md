@@ -82,7 +82,7 @@ src/worker.js       子进程：bsk 驱动 Chrome → 分秒帧网页上传
 ## 本机准备
 
 ```bash
-cd /Users/fanxiaoli/WorkBuddy/乌小河机器人/05-工程/video-bot
+cd ~/WorkBuddy/乌小河机器人/05-工程/video-bot
 
 cp .env.example .env
 # 编辑 .env，填入 App ID / App Secret

@@ -47,9 +47,13 @@ function evalIn(sid, js) {
 
 const CONFIG_PATH = path.join(cfg.ROOT, 'config.json');
 
+function commandFor(p) { return '/tbpz ' + (p.startsWith('nts3') ? '逆天萌兽3 ' : '') + (['fineCut','nts3FineCut'].includes(p) ? '精剪' : '粗剪'); }
+
 function profileKey(profile) {
   if (!profile || profile === 'default') return 'reviewSync';
   if (profile === 'fineCut') return 'reviewSyncFineCut';
+  if (profile === 'nts3') return 'reviewSyncNts3';
+  if (profile === 'nts3FineCut') return 'reviewSyncNts3FineCut';
   throw new Error('未知批注同步分支：' + profile);
 }
 
@@ -60,9 +64,11 @@ function profileKey(profile) {
  * 旧写法（`/tbpz 全量`、`/tbpz 预览`、`/tbpz 执行`）不给分支名，仍按粗剪走，别打断同事习惯。
  */
 function parseCommand(arg) {
+  const project = /^(?:逆天萌兽3|萌兽3|nts3)\s+/.test(arg);
+  if (project) arg = arg.replace(/^(?:逆天萌兽3|萌兽3|nts3)\s+/, '');
   const match = /^(精剪|粗剪)(?:\s+|$)/.exec(arg);
   return {
-    profile: match && match[1] === '精剪' ? 'fineCut' : 'default',
+    profile: project ? (match && match[1] === '精剪' ? 'nts3FineCut' : 'nts3') : (match && match[1] === '精剪' ? 'fineCut' : 'default'),
     named: !!match,
     arg: match ? arg.slice(match[0].length).trim() : arg,
   };
@@ -77,6 +83,10 @@ function writeConfig(patch, profile = 'default') {
   const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
   const key = profileKey(profile);
   raw[key] = Object.assign({}, raw[key], patch);
+  if (profile.startsWith('nts3') && patch.mediatrackUrl) {
+    const project = (raw.sceneProjects || []).find(p => p.key === 'nts3');
+    if (project) project[profile === 'nts3FineCut' ? 'trimPreviewUrl' : 'projectUrl'] = patch.mediatrackUrl;
+  }
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2) + '\n');
   return raw[key];
 }
@@ -133,9 +143,7 @@ function fileNameOf(text) {
 }
 
 function episodeOf(name) {
-  const base = path.basename(name, path.extname(name));
-  const m = /\d{1,4}/.exec(base);
-  return m ? Number(m[0]) : null;
+  return require('./task-identity').parse(name)?.episode ?? null;
 }
 
 /** 「成艳@6524\n00:21\n眼睛这里改的\n今天 11:52\n0\n0」→ 结构化 */
@@ -335,7 +343,30 @@ function rowKey(episode, timeline, content) {
   return `${episode}|${timeline}|${String(content).replace(/\s+/g, '')}`;
 }
 
-function existingKeys(records) {
+function flatField(v) { return Array.isArray(v) ? v.map(x => x.text || '').join('') : String(v ?? ''); }
+
+// 分秒帧的批注人是「名字@团队」形式（如 miya@2381的团队、冯先生@冯先生）。
+// 表里「批注人」只要人名，取 @ 之前那段；全角 ＠ 也当分隔符，顺手去掉行首的 @。
+function cleanAuthor(s) {
+  return String(s || '').replace(/^[\s@＠]+/, '').split(/[@＠]/)[0].trim();
+}
+
+// 目标表不一定有「批注人」列（老的批注表就没有），写之前先探测一次并缓存。
+const fieldNameCache = new Map();
+async function tableHasField(appToken, tableId, name) {
+  const key = `${appToken}|${tableId}`;
+  if (!fieldNameCache.has(key)) {
+    const res = await getClient().bitable.v1.appTableField.list({
+      path: { app_token: appToken, table_id: tableId },
+      params: { page_size: 100 },
+    });
+    if (res.code) throw new Error(res.msg || `读字段失败 ${res.code}`);
+    const d = res.data || res;
+    fieldNameCache.set(key, new Set((d.items || []).map(f => f.field_name)));
+  }
+  return fieldNameCache.get(key).has(name);
+}
+function existingKeys(records, conf = {}) {
   const set = new Set();
   for (const r of records) {
     const f = r.fields || {};
@@ -346,20 +377,87 @@ function existingKeys(records) {
     const ct = Array.isArray(f['需求简述'])
       ? f['需求简述'].map((x) => x.text || '').join('')
       : f['需求简述'];
-    set.add(rowKey(ep, tl, ct));
+    if (conf.sceneMode) {
+      if (conf.episodeRows) {
+        for (const block of String(ct || '').split(/\n\n(?=【场次任务：)/)) {
+          const meta = require('./scene-comments').decode(block);
+          if (meta) set.add(require('./scene-comments').key(meta));
+        }
+        continue;
+      }
+      const meta = require('./scene-comments').decode(ct);
+      if (meta) set.add(require('./scene-comments').key({ ...meta, timeline: tl }));
+      else if (f['场次'] != null) set.add(require('./scene-comments').key({ episode: Number(ep), scene: Number(f['场次']), file: flatField(f['源视频']), version: flatField(f['视频版本']), timeline: tl, content: ct }));
+    } else set.add(rowKey(ep, tl, ct));
   }
   return set;
 }
 
-async function createRows(appToken, tableId, rows, signal) {
+async function upsertEpisodeRows(appToken, tableId, rows, signal) {
+  const existing = await loadExisting(appToken, tableId, signal);
+  const hasAuthor = await tableHasField(appToken, tableId, '批注人');
+  const byEpisode = new Map();
+  for (const record of existing) {
+    const ep = Number(flatField(record.fields?.['集数']));
+    if (!ep) continue;
+    if (byEpisode.has(ep)) throw new Error(`批注表第${ep}集有多行，请先核对；本次未写入`);
+    byEpisode.set(ep, record);
+  }
+  const groups = new Map();
+  for (const row of rows) {
+    const ep = Number(row.episode);
+    if (!groups.has(ep)) groups.set(ep, []);
+    groups.get(ep).push(row);
+  }
+  let written = 0;
+  for (const [ep, incoming] of groups) {
+    if (signal?.aborted) break;
+    const previous = byEpisode.get(ep);
+    const oldContent = flatField(previous?.fields?.['需求简述']);
+    const blocks = new Set(oldContent.split(/\n\n(?=【场次任务：)/).filter(Boolean));
+    for (const row of incoming) blocks.add(require('./scene-comments').content(row));
+    const fields = { 集数: ep, 需求简述: [...blocks].join('\n\n') };
+    const timelines = new Set(flatField(previous?.fields?.Timeline).split('、').filter(Boolean));
+    for (const row of incoming) if (row.timeline) timelines.add(row.timeline);
+    fields.Timeline = [...timelines].join('、');
+    const at = Math.max(Number(previous?.fields?.['批注日期']) || 0, ...incoming.map(r => Number(r.at) || 0));
+    if (at) fields['批注日期'] = at;
+    if (hasAuthor) {
+      const who = new Set(flatField(previous?.fields?.['批注人']).split(/[、,，]/).map(s => s.trim()).filter(Boolean));
+      for (const row of incoming) { const n = cleanAuthor(row.author); if (n) who.add(n); }
+      if (who.size) fields['批注人'] = [...who].join('、');
+    }
+    const api = getClient().bitable.v1.appTableRecord;
+    const result = previous
+      ? await api.update({path:{app_token:appToken,table_id:tableId,record_id:previous.record_id || previous.id},data:{fields}})
+      : await api.create({path:{app_token:appToken,table_id:tableId},data:{fields}});
+    if (result.code) throw new Error(result.msg || '整集批注汇总写入失败');
+    written += incoming.length;
+  }
+  return written;
+}
+
+async function createRows(appToken, tableId, rows, signal, conf = {}) {
+  require('./scene-comments').validate(rows, conf);
+  if (conf.episodeRows) return upsertEpisodeRows(appToken, tableId, rows, signal);
+  const hasAuthor = await tableHasField(appToken, tableId, '批注人');
   let ok = 0;
   for (const row of rows) {
     if (signal?.aborted) break;
     const fields = {
       集数: row.episode,
       Timeline: row.timeline,
-      需求简述: row.content,
+      需求简述: conf.sceneMode ? require('./scene-comments').content(row) : row.content,
     };
+    if (hasAuthor) {
+      const who = cleanAuthor(row.author);
+      if (who) fields['批注人'] = who;
+    }
+    if (conf.sceneFields) {
+      if (row.scene != null) fields['场次'] = row.scene;
+      fields['源视频'] = row.file || ''; fields['视频版本'] = row.version || '';
+      if (row.taskRecordId) fields['场次任务'] = [row.taskRecordId];
+    }
     if (row.at) fields['批注日期'] = row.at;
     try {
       const res = await getClient().bitable.v1.appTableRecord.create({
@@ -375,7 +473,7 @@ async function createRows(appToken, tableId, rows, signal) {
   return ok;
 }
 
-function parseCollected(outFile, runStart) {
+function parseCollected(outFile, runStart, conf = {}) {
   const rows = [];
   const perVideo = [];
   let lines = [];
@@ -392,11 +490,16 @@ function parseCollected(outFile, runStart) {
     } catch (e) {
       continue;
     }
-    const ep = episodeOf(o.file);
-    const comments = parseCommentsFromBody(o.body);
+    const identity = require('./task-identity').parse(o.file);
+    const ep = identity?.episode ?? null;
+    // v002 采集脚本直接给结构化 comments（已滚动读全 + 合并去重）；
+    // 老 jsonl 只有整页 body，仍走文本解析兜底。
+    const comments = Array.isArray(o.comments) ? o.comments : parseCommentsFromBody(o.body);
     for (const c of comments) {
       rows.push({
         episode: ep,
+        scene: identity?.scene ?? null,
+        version: o.versionId || o.version || '',
         timeline: c.timeline,
         content: c.content,
         at: dateToMs(c.dateText, runStart),
@@ -404,14 +507,17 @@ function parseCollected(outFile, runStart) {
         file: o.file,
       });
     }
-    perVideo.push({ file: o.file, episode: ep, got: comments.length });
+    perVideo.push({ file: o.file, episode: ep, got: comments.length, badge: Number(o.count) || 0 });
   }
 
-  // 同集 + 同时间点只留第一条：后面的多是回复，按需求不写
+  // 同一时间点可以有多条不同批注（40.mp4 有两条 00:17），只按「集数+时间码+正文」去重。
+  // 2026-11-02 之前按「集数+时间码」去重，同一时间点的第二条直接被丢掉。
   const seenSlot = new Set();
   const rowsNoReply = [];
   for (const r of rows) {
-    const k = `${r.episode}|${r.timeline}`;
+    const k = conf.sceneMode
+      ? require('./scene-comments').key(r)
+      : rowKey(r.episode, r.timeline, r.content);
     if (seenSlot.has(k)) continue;
     seenSlot.add(k);
     rowsNoReply.push(r);
@@ -433,10 +539,14 @@ function savePreview(cache) {
   fs.renameSync(temp, dest);
 }
 
-/** 仅用于迁移已核实来源的旧版采集文件；不采集、不连飞书、不写表。 */
+/**
+ * 仅用于迁移已核实来源的旧版采集文件；不采集、不连飞书、不写表。
+ * ⚠️ runStart 必须是「这轮采集的开始时间」，不是搬文件的时间 ——
+ *    它会成为下一轮的增量水位（只捞更新时间 >= 它的视频），填晚了会漏掉中间那次采集期间的批注。
+ */
 function cacheCollectedPreview({ profile, collectedFile, runStart, full, sinceMs, complete = false }) {
   const conf = readConfig(profile);
-  const parsed = parseCollected(collectedFile, runStart);
+  const parsed = parseCollected(collectedFile, runStart, conf);
   savePreview({ version: 1, profile, runStart, full: !!full, sinceMs: sinceMs || 0,
     complete, mediatrackUrl: conf.mediatrackUrl, appToken: conf.appToken,
     tableId: conf.tableId, ...parsed });
@@ -446,7 +556,7 @@ function cacheCollectedPreview({ profile, collectedFile, runStart, full, sinceMs
 async function writePreview(opts) {
   const profile = opts.profile || 'default';
   const conf = readConfig(profile);
-  const command = profile === 'fineCut' ? '/tbpz 精剪' : '/tbpz 粗剪';
+  const command = commandFor(profile);
   let cache;
   try { cache = JSON.parse(fs.readFileSync(previewPath(profile), 'utf8')); }
   catch (e) { throw new Error(`没有可用预览缓存，请先发：${command} 预览`); }
@@ -461,9 +571,10 @@ async function writePreview(opts) {
   progress(`使用 ${new Date(cache.runStart).toLocaleString('zh-CN')} 的预览缓存，不重新采集。` +
     (cache.complete ? '' : '该次采集未完整结束，仅写入已缓存部分，不推进增量水位。'));
   const records = await loadExisting(conf.appToken, conf.tableId, opts.signal);
-  const seen = existingKeys(records);
-  const fresh = cache.rows.filter(r => r.episode && !seen.has(rowKey(r.episode, r.timeline, r.content)));
-  const written = await createRows(conf.appToken, conf.tableId, fresh, opts.signal);
+  const seen = existingKeys(records, conf);
+  require('./scene-comments').validate(cache.rows, conf);
+  const fresh = cache.rows.filter(r => r.episode && !seen.has(conf.sceneMode ? require('./scene-comments').key(r) : rowKey(r.episode, r.timeline, r.content)));
+  const written = await createRows(conf.appToken, conf.tableId, fresh, opts.signal, conf);
   fs.appendFileSync(path.join(cfg.ROOT, 'tbpz-sync-log.jsonl'), JSON.stringify({
     at: new Date().toISOString(), profile, mode: '缓存写入', previewAt: new Date(cache.runStart).toISOString(),
     mediatrackUrl: cache.mediatrackUrl, tableId: cache.tableId, videos: cache.perVideo.length,
@@ -480,7 +591,7 @@ async function writePreview(opts) {
 
 // 首次增量实际遍历全库，应与显式全量使用相同上限。
 function collectionTimeoutMs(full, sinceMs) {
-  return (full || !sinceMs ? 120 : 25) * 60 * 1000;
+  return (full || !sinceMs ? 120 : 60) * 60 * 1000;
 }
 
 // ---------------------------------------------------------------- 主流程
@@ -493,7 +604,7 @@ async function run(opts = {}) {
   if (opts.writeCached) return writePreview(opts);
   const profile = opts.profile || 'default';
   const conf = readConfig(profile);
-  const cmd = profile === 'fineCut' ? '/tbpz 精剪' : '/tbpz 粗剪';
+  const cmd = commandFor(profile);
   if (!conf.mediatrackUrl) throw new Error(`还没配分秒帧链接，发：${cmd} 分秒帧 <项目链接>`);
   if (!conf.appToken || !conf.tableId) throw new Error(`还没配多维表格链接，发：${cmd} 表格 <表格链接>`);
 
@@ -502,12 +613,97 @@ async function run(opts = {}) {
   const runStart = Date.now();
   // 增量：只同步上次同步之后更新的视频（列表按更新时间倒序，滚 1-2 屏就到边界）
   const full = !!opts.full;
-  const sinceMs = full ? 0 : (conf.lastSyncAt || 0);
+  // 未建立历史水位时显式采用近期窗口，不把增量静默升级为全量。
+  // 单独保存起点，失败/中断重试仍覆盖相同区间。
+  const bootstrap = !full && !conf.lastSyncAt;
+  const sinceMs = full ? 0 : (conf.lastSyncAt || conf.incrementalSinceAt || runStart - 24 * 60 * 60 * 1000);
+  if (bootstrap && !conf.incrementalSinceAt) writeConfig({ incrementalSinceAt: sinceMs }, profile);
+  if (bootstrap) progress('尚无成功同步水位：本轮增量从 ' + new Date(sinceMs).toLocaleString('zh-CN') + ' 开始；更早的历史批注请用「' + cmd + ' 全量」补齐。');
 
   // 浏览器采集交给 bash 脚本：Node 里连续调 bsk evaluate 会卡住
   const outFile = opts.collectedFile || path.join(require('os').tmpdir(), `tbpz-${Date.now()}.jsonl`);
-  const collector = path.join(__dirname, '..', 'scripts', 'tbpz-collect.sh');
+  // v003（2026-11-02 12:35）：先确认列表排序为「更新时间/由近到远」，再按角标筛目标、滚动读全。
+  // 旧版 tbpz-collect.sh / _v002 保留不删。
+  // v005（2026-11-04）：审片空间 /reviews/ 链接专用 —— 页面上 bsk 走共享标签页策略，
+  // 每次 evaluate 都要 cooperate context，v004 会静默读空。项目文件页仍用 v004（稳定）。
+  const collector = /\/reviews\//.test(projectUrl)
+    ? path.join(__dirname, '..', 'scripts', 'tbpz-collect_v005.sh')
+    : path.join(__dirname, '..', 'scripts', 'tbpz-collect_v004.sh');
   const limit = String(process.env.TBPZ_MAX || opts.maxVideos || 0);
+
+  // —— 边读边写（2026-11-04）：先把表里已有的批注键读出来，采集过程中每 20 秒把
+  // 采集脚本新落的行解析、去重、直接写表，不用等整轮采完才见数据。
+  const records = await loadExisting(conf.appToken, conf.tableId, opts.signal);
+  const seen = existingKeys(records, conf);
+  const keyOf = (r) => (conf.sceneMode ? require('./scene-comments').key(r) : rowKey(r.episode, r.timeline, r.content));
+  const seenSlot = new Set();
+  const rowsAll = [];
+  const freshAll = [];
+  const perVideoAll = [];
+  const sampleRows = [];
+  let rowsTotal = 0;
+  let freshTotal = 0;
+  let writtenTotal = 0;
+  let processedLines = 0;
+  // 写表串行队列：解析（同步）与写表（异步）分离，避免「等自己」死锁
+  let writeChain = Promise.resolve();
+
+  function doDrain(write) {
+    if (!fs.existsSync(outFile)) return;
+    const lines = fs.readFileSync(outFile, 'utf8').split('\n');
+    if (lines.length && lines[lines.length - 1] === '') lines.pop();
+    const todo = lines.slice(processedLines);
+    processedLines = lines.length;
+    for (const line of todo) {
+      let o;
+      try { o = JSON.parse(line); } catch (e) { continue; }
+      const identity = require('./task-identity').parse(o.file);
+      const ep = identity?.episode ?? null;
+      const comments = Array.isArray(o.comments) ? o.comments : parseCommentsFromBody(o.body);
+      const rows = comments.map((c) => ({
+        episode: ep,
+        scene: identity?.scene ?? null,
+        version: o.versionId || o.version || '',
+        timeline: c.timeline,
+        content: c.content,
+        at: dateToMs(c.dateText, runStart),
+        author: c.author,
+        file: o.file,
+      }));
+      perVideoAll.push({ file: o.file, episode: ep, got: comments.length, badge: Number(o.count) || 0 });
+      const dedup = [];
+      for (const r of rows) {
+        const k = keyOf(r);
+        if (seenSlot.has(k)) continue;
+        seenSlot.add(k);
+        dedup.push(r);
+      }
+      rowsTotal += dedup.length;
+      rowsAll.push(...dedup);
+      const fresh = dedup.filter((r) => r.episode && !seen.has(keyOf(r)));
+      require('./scene-comments').validate(fresh, conf);
+      freshAll.push(...fresh);
+      freshTotal += fresh.length;
+      if (sampleRows.length < 10) sampleRows.push(...fresh.slice(0, 10 - sampleRows.length));
+      for (const r of fresh) seen.add(keyOf(r));
+      if (write && fresh.length) {
+        const batch = fresh;
+        // 单个视频写失败不拖垮整轮（水位口径兜底：written < fresh 时不推水位）
+        writeChain = writeChain.then(async () => {
+          if (opts.signal?.aborted) return;
+          writtenTotal += await createRows(conf.appToken, conf.tableId, batch, opts.signal, conf);
+        }).catch((e) => log(`写入失败（${(batch[0] && batch[0].file) || '?'}）：${(e && e.message) || e}`));
+      }
+    }
+  }
+
+  function drainCollected(write) {
+    // 先消化新行，再等已排队的写表任务落完
+    return Promise.resolve()
+      .then(() => doDrain(write))
+      .then(() => writeChain)
+      .catch((e) => log('边读边写调度失败：' + ((e && e.message) || e)));
+  }
 
   let collectOk = false;
   if (!opts.collectedFile && !opts.signal?.aborted) {
@@ -540,12 +736,19 @@ async function run(opts = {}) {
       const eta = per && remain ? Math.ceil(per * remain) : null;
       progress(
         `📊 进度：已读 ${done}/${total || '?'} 个视频、批注 ${comments} 条` +
+        `${opts.dryRun ? '' : `，已写表 ${writtenTotal} 条`}` +
         `${remain ? `，还差 ${remain} 个` : '，采集快收尾了'}` +
         `${eta != null ? `，预计还要 ${eta} 分钟` : ''}（已用 ${Math.floor(elapsed)} 分钟）`
       );
     } catch (e) { /* 进度读失败不影响主流程 */ }
   }, 5 * 60 * 1000);
   if (progTimer.unref) progTimer.unref();
+
+  // 边读边写：采集脚本每读完一个视频就落一行，这里每 20 秒消化一次新行
+  const drainTimer = setInterval(() => {
+    drainCollected(!opts.dryRun).catch(() => {});
+  }, 20 * 1000);
+  if (drainTimer.unref) drainTimer.unref();
 
   // 异步跑采集脚本：绝不能用 execFileSync——它会把 Node 事件循环冻住十几分钟，
   // 开工回执发不出去、长连接心跳停摆、所有消息都没响应（2026-10-27 踩过）
@@ -590,40 +793,24 @@ async function run(opts = {}) {
     log('采集脚本失败：' + ((e && e.message) || e));
   } finally {
     clearInterval(progTimer);
+    clearInterval(drainTimer);
   }
   }
 
-  const { rows: rowsNoReply, perVideo } = opts.signal?.aborted && !fs.existsSync(outFile)
-    ? { rows: [], perVideo: [] } : parseCollected(outFile, runStart);
-  const cacheSaved = (opts.dryRun || opts.signal?.aborted) && (!opts.signal?.aborted || perVideo.length > 0);
+  // 收尾：把采集脚本最后落的几行也处理掉（平时 watcher 已经边读边写了）
+  await drainCollected(!opts.dryRun && !opts.signal?.aborted);
+
+  const cacheSaved = (opts.dryRun || opts.signal?.aborted) && perVideoAll.length > 0;
   if (cacheSaved) {
     savePreview({ version: 1, profile, runStart, full, sinceMs, complete: collectOk,
       mediatrackUrl: projectUrl, appToken: conf.appToken, tableId: conf.tableId,
-      rows: rowsNoReply, perVideo });
+      rows: rowsAll, perVideo: perVideoAll });
   }
 
   if (opts.signal?.aborted) {
-    return { canceled: true, cacheSaved, videos: perVideo.length, comments: rowsNoReply.length,
-      fresh: 0, written: 0, dryRun: !!opts.dryRun, full, sinceMs,
-      cacheComplete: false, perVideo, sample: [] };
-  }
-
-  const records = await loadExisting(conf.appToken, conf.tableId, opts.signal);
-  const seen = existingKeys(records);
-  const fresh = rowsNoReply.filter((r) => r.episode && !seen.has(rowKey(r.episode, r.timeline, r.content)));
-
-
-
-  let written = 0;
-  if (!opts.dryRun) {
-    progress(`写入 ${fresh.length} 条…`);
-    written = await createRows(conf.appToken, conf.tableId, fresh, opts.signal);
-  }
-
-  if (opts.signal?.aborted && !cacheSaved) {
-    savePreview({ version: 1, profile, runStart, full, sinceMs, complete: false,
-      mediatrackUrl: projectUrl, appToken: conf.appToken, tableId: conf.tableId,
-      rows: rowsNoReply, perVideo });
+    return { canceled: true, cacheSaved, videos: perVideoAll.length, comments: rowsTotal,
+      fresh: freshTotal, written: writtenTotal, dryRun: !!opts.dryRun, full, sinceMs,
+      cacheComplete: false, perVideo: perVideoAll, sample: sampleRows };
   }
 
   // 成功写完 → 记同步台账 + 更新增量水位（下次 /tbpz 从这儿往后同步）
@@ -636,19 +823,22 @@ async function run(opts = {}) {
         tableId: conf.tableId,
         mode: full ? '全量' : '增量',
         since: sinceMs ? new Date(sinceMs).toISOString() : null,
-        videos: perVideo.length,
-        comments: rowsNoReply.length,
-        written,
-        rows: fresh.map((r) => ({
+        videos: perVideoAll.length,
+        comments: rowsTotal,
+        written: writtenTotal,
+        rows: freshAll.map((r) => ({
           episode: r.episode, timeline: r.timeline,
           content: String(r.content).slice(0, 200), author: r.author || '', file: r.file,
         })),
       };
       fs.appendFileSync(path.join(cfg.ROOT, 'tbpz-sync-log.jsonl'), JSON.stringify(entry) + '\n');
       // 采集失败时绝不推水位：那样这批视频/批注就永久漏掉了（2026-10-28 之前一直是无条件推）
-      if (!opts.signal?.aborted && collectOk && written === fresh.length) {
+      // ⚠️ 水位 = runStart（本轮采集的「开始」时间），不是结束时间。任务持续过程中出现的
+      //    新批注（更新时间落在本轮中途）下一轮会被「更新时间 >= 上次开始时间」重新捞到。
+      //    小熊 2026-11-02 明确要求这个口径，别改成结束时间。
+      if (collectOk && writtenTotal === freshTotal) {
         writeConfig({ lastSyncAt: runStart }, profile);
-        log(`批注同步台账已记（${entry.mode}，写 ${written} 条），水位推到 ${entry.at}`);
+        log(`批注同步台账已记（${entry.mode}，写 ${writtenTotal} 条），水位推到 ${entry.at}`);
       } else {
         log('⚠️ 采集未成功收尾或写表未全部成功，水位不推进（下次仍从原水位捞，避免漏批注）');
       }
@@ -658,22 +848,24 @@ async function run(opts = {}) {
   }
 
   return {
-    canceled: !!opts.signal?.aborted,
-    cacheSaved: cacheSaved || !!opts.signal?.aborted,
-    videos: perVideo.length,
-    comments: rowsNoReply.length,
-    fresh: fresh.length,
-    written,
+    canceled: false,
+    cacheSaved,
+    videos: perVideoAll.length,
+    comments: rowsTotal,
+    fresh: freshTotal,
+    written: writtenTotal,
     cacheComplete: collectOk,
     dryRun: !!opts.dryRun,
     full,
     sinceMs,
-    perVideo,
-    sample: fresh.slice(0, 10),
+    perVideo: perVideoAll,
+    sample: sampleRows,
   };
 }
 
 module.exports = {
-  run, readConfig, writeConfig, parseCommand, collectionTimeoutMs, cacheCollectedPreview, parseBitableUrl, fileNameOf, episodeOf,
-  parseCommentBox, parseCommentsFromBody, dateToMs,
+  run, readConfig, writeConfig, parseCommand, commandFor, collectionTimeoutMs, cacheCollectedPreview, parseBitableUrl, fileNameOf, episodeOf,
+  parseCommentBox, parseCommentsFromBody, dateToMs, cleanAuthor,
+  // 供工具脚本复用（单集同步、回填等），不参与主流程
+  _internal: { parseCollected, createRows, loadExisting, existingKeys, rowKey, tableHasField },
 };

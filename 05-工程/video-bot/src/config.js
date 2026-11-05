@@ -35,7 +35,7 @@ module.exports = {
   REPLY_ON_RECEIVE: raw.replyOnReceive !== false,
   COMMAND: raw.command || '/upmedia',
   WAIT_SECONDS: raw.waitSeconds || 300,
-  BASE: raw.base || {},
+  BASE: require('./project-context').base,
   BASE_COMMAND: raw.baseCommand || '/base',
   FLOW: raw.flow || {},
   HEALTH: raw.health || {},

@@ -9,6 +9,11 @@
  *   ③ 剪辑进度=可剪辑 + 素材已上传 + 一审通过 三者齐 → 发「开始精剪」卡片（剪辑师）
  *   ⑤ 开始剪辑 → 剪辑进度=剪辑中；精剪完成 → 待审片 + 发终审卡；审片人点「查看成片」→ 审片中
  *   ⑥ 剪辑通过 → 审阅反馈=通过、剪辑进度=已定剪、实际完成日期=今天
+ *
+ * ⑤ 那三档（剪辑中/待审片/审片中）逆天萌兽3 的表里没有 —— 导演的表只留了 待开始/可剪辑/已定剪。
+ * 写不存在的选项飞书会报错、整张卡就废了，所以改按「状态词表」落地（src/status-vocab.js）：
+ * 表里有这一档才写表，没有就记在 flow-state.json 的 trimShadow 里，流程判断一律走 effectiveTrim()。
+ * 走到表里真有的「已定剪」时影子作废。
  */
 const fs = require('fs');
 const path = require('path');
@@ -16,7 +21,10 @@ const cfg = require('./config');
 const { getClient, withTimeout, sendTextTo } = require('./feishu');
 const { log } = require('./log');
 const C = require('./cards');
+const policy = require('./notification-policy');
 
+const PC = require('./project-context');
+const V = require('./status-vocab');
 const B = cfg.BASE || {};
 const F = { progress: '进展', stage: '素材生成进展', review: '审阅反馈', trim: '剪辑进度' };
 
@@ -45,18 +53,33 @@ function personList(v) {
 
 function mapRecord(it) {
   const f = it.fields || {};
+  const trimStage = flat(f[F.trim]);
   return {
     recordId: it.record_id,
     episode: flat(f['集数']),
-    project: flat(f['《项目名》']) || '《逆天萌兽2》',
+    scene: flat(f['场次']),
+    projectKey: PC.current().key,
+    projectUrl: PC.current().projectUrl,
+    tableUrl: PC.current().tableUrl,
+    trimPreviewUrl: PC.current().trimPreviewUrl,
+    sceneMode: !!PC.current().sceneMode,
+    project: PC.current().key === 'legacy' ? (flat(f['《项目名》']) || '《逆天萌兽2》') : PC.current().name,
     progress: flat(f[F.progress]),
     stage: flat(f[F.stage]),
     review: flat(f[F.review]),
-    trimStage: flat(f[F.trim]),
+    trimStage,
+    // 有效剪辑进度（表里写不进去的那几档记在机器人这边，卡片文案按它说）
+    trimEffective: effectiveTrim({ recordId: it.record_id, trimStage }),
     startDate: typeof f['开始日期'] === 'number' ? f['开始日期'] : null,
     artist: personList(f['制作师']),
     reviewers: personList(f['审片人']),
     editors: personList(f['剪辑师']),
+    // 这张表的「剪辑进度」有没有中间三档，卡片文案要按它说实话
+    cap: {
+      inProgress: V.has(F.trim, '剪辑中'),
+      awaiting: V.has(F.trim, '待审片'),
+      reviewing: V.has(F.trim, '审片中'),
+    },
   };
 }
 
@@ -79,7 +102,7 @@ async function fetchAllRecords() {
       }
     })();
     const d = res.data || res;
-    out.push(...((d.items) || []).map(mapRecord));
+    out.push(...((d.items) || []).map(it => PC.register(mapRecord(it))));
     if (!d.has_more) break;
     pageToken = d.page_token || '';
     if (!pageToken) break;
@@ -95,17 +118,18 @@ async function getRecord(recordId) {
 }
 
 async function updateFields(recordId, fields) {
-  await withTimeout(getClient().bitable.v1.appTableRecord.update({
+  const response = await withTimeout(getClient().bitable.v1.appTableRecord.update({
     path: { app_token: B.appToken, table_id: B.tableId, record_id: recordId },
     data: { fields },
   }), 10000, '改表');
+  if (response.code) throw new Error(response.msg || '改表失败');
   log(`改表 ${recordId}：${Object.keys(fields).map((k) => `${k}=${flat(fields[k])}`).join('、')}`);
 }
 
 async function sendCard(openId, card) {
   if (!openId) return false;
   try {
-    await withTimeout(getClient().im.v1.message.create({
+    const sent = await withTimeout(getClient().im.v1.message.create({
       params: { receive_id_type: 'open_id' },
       data: {
         receive_id: openId,
@@ -113,6 +137,7 @@ async function sendCard(openId, card) {
         content: JSON.stringify(card),
       },
     }), 10000, '发卡片');
+    if (sent.code) throw new Error(sent.msg || '发卡失败');
     return true;
   } catch (e) {
     log(`⚠️ 发卡片给 ${openId} 失败：${(e && e.message) || e}`);
@@ -123,11 +148,30 @@ async function sendCard(openId, card) {
 async function notify(people, card, label) {
   let ok = 0;
   for (const p of people) {
-    if (await sendCard(p.id, card)) ok++;
+    if (await require('./notification-policy').context.run(require('./notification-policy').featureForLabel(label), () => sendCard(p.id, card))) ok++;
     await sleep(200);
   }
   log(`卡片「${label}」已发 ${ok}/${people.length} 人`);
   return ok;
+}
+
+/**
+ * 制作师的卡这次发不发：空串=发；有值=不发，值是原因。
+ *
+ * 走的是统一通知策略（config.json → notificationPolicy.features.revision）：
+ * 关了「修改与素材通知」、或碰上免打扰、或这个人被设为不接收私聊，都会挡掉。
+ * 卡片文案必须靠它说实话——不能表改了、卡没发，还告诉审片人「已通知制作师」。
+ */
+function artistBlockReason(people) {
+  if (!people || !people.length) return '这一集没填制作师';
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(path.join(cfg.ROOT, 'config.json'), 'utf8'));
+  } catch (e) {
+    return '';
+  }
+  const reasons = people.map((p) => policy.reason(raw, p.id, 'revision')).filter(Boolean);
+  return reasons.length === people.length ? reasons[0] : '';
 }
 
 // ---------------------------------------------------------------- 去重状态
@@ -144,9 +188,10 @@ function loadState() {
       seen: (s.seen && typeof s.seen === 'object') ? s.seen : null,
       undo: (s.undo && typeof s.undo === 'object') ? s.undo : {},
       trimAt: (s.trimAt && typeof s.trimAt === 'object') ? s.trimAt : {},
+      trimShadow: (s.trimShadow && typeof s.trimShadow === 'object') ? s.trimShadow : {},
     };
   } catch (e) {
-    return { sent: new Set(), initialized: false, tries: {}, seen: null, undo: {}, trimAt: {} };
+    return { sent: new Set(), initialized: false, tries: {}, seen: null, undo: {}, trimAt: {}, trimShadow: {} };
   }
 }
 
@@ -163,6 +208,7 @@ function saveState() {
       seen: flowState.seen || {},
       undo: flowState.undo || {},
       trimAt: flowState.trimAt || {},
+      trimShadow: flowState.trimShadow || {},
     }, null, 2));
   } catch (e) {
     /* 写失败不影响主流程 */
@@ -172,6 +218,61 @@ function saveState() {
 function remember(key) {
   flowState.sent.add(key);
   saveState();
+}
+
+// ------------------------------------------------- 剪辑进度的「影子档位」
+//
+// 「剪辑中 / 待审片 / 审片中」这三档，逆天萌兽2 的表里有，逆天萌兽3 的表里没有。
+// 表里没有就不写表（写了会报错），改记在 flow-state.json 的 trimShadow 里：
+//   trimShadow[recordId] = { stage, at }
+// 有了它，流程判断一律走 effectiveTrim()，卡片文案也按它说实话；
+// 走到表里真有的「已定剪」时把影子清掉。
+
+function shadowStage(recordId) {
+  const s = (flowState.trimShadow || {})[recordId];
+  return (s && s.stage) || '';
+}
+
+function setShadow(recordId, stage) {
+  flowState.trimShadow = flowState.trimShadow || {};
+  if (!stage) {
+    if (!flowState.trimShadow[recordId]) return;
+    delete flowState.trimShadow[recordId];
+  } else {
+    flowState.trimShadow[recordId] = { stage, at: Date.now() };
+  }
+  saveState();
+}
+
+/** 有效剪辑进度：表里的值 + 表里写不进去的那几档 */
+function effectiveTrim(rec) {
+  if (!rec) return '';
+  if (rec.trimStage === '已定剪') return '已定剪'; // 表已经走到终点，影子作废
+  return shadowStage(rec.recordId) || rec.trimStage;
+}
+
+/**
+ * 写剪辑进度：表里有这一档就写表，没有就只记影子。
+ * 返回 true=写进表了，false=表里没这档（只记在机器人这边）。
+ */
+async function writeTrim(rec, stage) {
+  if (!V.has(F.trim, stage)) {
+    setShadow(rec.recordId, stage);
+    log(`剪辑进度「${stage}」这张表没有这一档，只记在机器人这边（${rec.episode} 集）`);
+    return false;
+  }
+  try {
+    await updateFields(rec.recordId, { [F.trim]: stage });
+  } catch (e) {
+    // 词表过期（有人刚删了选项）时兜底：认得出是选项错误就不写表，记影子
+    if (!V.isOptionError(e)) throw e;
+    log(`剪辑进度「${stage}」写表失败（${(e && e.message) || e}），改记在机器人这边`);
+    V.load(true).catch(() => {});
+    setShadow(rec.recordId, stage);
+    return false;
+  }
+  setShadow(rec.recordId, '');
+  return true;
 }
 
 /** 该不该给这条发一审卡片 */
@@ -253,12 +354,13 @@ function reviewKey(rec) {
 
 /** 开始精剪卡的三条件：剪辑进度=可剪辑、素材生成进展=已完成并上传、审阅反馈=通过 */
 function trimReady(rec) {
-  return rec.trimStage === '可剪辑' && rec.stage === '已完成并上传' && rec.review === '通过';
+  return effectiveTrim(rec) === '可剪辑' && rec.stage === '已完成并上传' && rec.review === '通过';
 }
 
 function trimMissing(rec) {
   const miss = [];
-  if (rec.trimStage !== '可剪辑') miss.push(`剪辑进度=${rec.trimStage || '空'}（要可剪辑）`);
+  const trim = effectiveTrim(rec);
+  if (trim !== '可剪辑') miss.push(`剪辑进度=${trim || '空'}（要可剪辑）`);
   if (rec.stage !== '已完成并上传') miss.push(`素材生成进展=${rec.stage || '空'}（要已完成并上传）`);
   if (rec.review !== '通过') miss.push(`审阅反馈=${rec.review || '空'}（要通过）`);
   return miss;
@@ -319,8 +421,14 @@ async function tick() {
   ticking = true;
   const stats = { scanned: 0, started: 0, reviewed: 0, trimmed: 0, failed: 0 };
   try {
+    await V.load(false); // 先看这张表的下拉选项（5 分钟一刷），卡片流程按它落地
     const records = await fetchAllRecords();
     stats.scanned = records.length;
+
+    // 表里已经定剪的，影子状态清掉（可能在表里手动改过了）
+    for (const rec of records) {
+      if (rec.trimStage === '已定剪' && shadowStage(rec.recordId)) setShadow(rec.recordId, '');
+    }
 
     // 同一条记录走完一轮又回到同一状态（比如 待一审 → 通过 → 又被改回待一审）时，
     // 旧的「已发」标记必须失效，否则永远不再发卡。靠记录状态变化来清。
@@ -412,9 +520,9 @@ function startScheduler() {
     log('流程自动化：未开启');
     return;
   }
-  log(`流程自动化：每 ${minutes} 分钟巡检一次`);
-  setTimeout(() => { tick(); }, 15000); // 起来先跑一遍
-  setInterval(() => { tick(); }, minutes * 60 * 1000).unref();
+  log(`流程自动化：每 ${minutes * 60} 秒巡检一次`);
+  setTimeout(() => { tickProjects(); }, 15000); // 起来先跑一遍
+  setInterval(() => { tickProjects(); }, minutes * 60 * 1000).unref();
 }
 
 // ---------------------------------------------------------------- 按钮回调
@@ -621,9 +729,15 @@ async function handleCardAction(action, operatorOpenId, msgId) {
       return { toast: { type: 'error', content: '读记录失败' } };
     }
 
+    if (action.batch) {
+      const b = require('./batch');
+      if (!b.eligible(rec, operatorOpenId, action.batch.kind) || b.signature(rec) !== action.batch.signature)
+        return { toast: { type: 'error', content: '跳过：所属人员或状态已变化，请刷新清单' } };
+    }
     const title = C.epTitle(rec);
     let card;
     let toast;
+    let batchNotification = '';
     let before = null; // 改之前的字段值（撤回用）
 
     switch (a) {
@@ -647,6 +761,8 @@ async function handleCardAction(action, operatorOpenId, msgId) {
           await updateFields(r, patch);
           log(`撤回 ${rec.episode} 集：${Object.keys(patch).join('、')} 改回原值（原动作 ${ACTION_LABEL[info.action] || info.action}）`);
         }
+        // 剪辑的中间档位可能只记在机器人这边（表上没这一档），撤回时一起清掉
+        setShadow(r, '');
         const restored = Object.assign({}, rec, {
           progress: b.progress, stage: b.stage, review: b.review, trimStage: b.trimStage,
         });
@@ -669,14 +785,21 @@ async function handleCardAction(action, operatorOpenId, msgId) {
         // 一审过了就允许剪辑（素材还没上传时剪辑师只能等上传卡片）
         before = snapshotOf(rec);
         await updateFields(r, { [F.review]: '通过', [F.trim]: '可剪辑' });
+        setShadow(r, ''); // 重新过一遍一审，旧的剪辑影子状态作废
         rec.review = '通过';
         rec.trimStage = '可剪辑';
-        const upN = await notify(rec.artist, C.uploadCard(rec), `请上传素材 ${rec.episode}`);
+        rec.trimEffective = '可剪辑';
+        const uploadBlocked = artistBlockReason(rec.artist);
+        const upN = uploadBlocked ? 0 : await notify(rec.artist, C.uploadCard(rec), `请上传素材 ${rec.episode}`);
+        batchNotification = `制作师通知 ${upN}/${rec.artist.length} 人`;
         if (upN > 0) await tellOperator(operatorOpenId, rec.artist, '制作师', '「请上传素材」卡片');
+        else log(`「请上传素材」卡没发（${uploadBlocked || '发送失败'}）：${rec.episode} 集`);
         // 素材可能已经先传了：三条件这时齐了就直接发精剪卡，不用等下一轮巡检
         const trimSent = trimReady(rec) ? await sendTrimCard(rec) : false;
         if (trimSent) await tellOperator(operatorOpenId, rec.editors, '剪辑师', '「开始精剪」卡片');
-        toast = trimSent ? '一审通过，素材也齐了，已通知剪辑师开始精剪' : '一审通过，已通知制作师上传素材';
+        toast = trimSent ? '一审通过，素材也齐了，已通知剪辑师开始精剪'
+          : uploadBlocked ? `一审通过；制作师通知没发（${uploadBlocked}）`
+          : '一审通过，已通知制作师上传素材';
         card = C.settledCard(`${title} · 一审通过`, [
           `**审阅反馈**：通过`,
           `**剪辑进度**：可剪辑`,
@@ -686,7 +809,9 @@ async function handleCardAction(action, operatorOpenId, msgId) {
           '',
           trimSent
             ? '素材已经上传过了，已直接通知剪辑师开始精剪。'
-            : '已通知制作师上传素材。三条件（可剪辑 + 素材已上传 + 一审通过）齐了才会给剪辑师发「开始精剪」卡片。',
+            : uploadBlocked
+              ? `制作师通知没发（${uploadBlocked}），「请上传素材」这张卡没送出去；要通知制作师请直接跟他说。三条件（可剪辑 + 素材已上传 + 一审通过）齐了才会给剪辑师发「开始精剪」卡片。`
+              : '已通知制作师上传素材。三条件（可剪辑 + 素材已上传 + 一审通过）齐了才会给剪辑师发「开始精剪」卡片。',
         ], 'green');
         break;
       }
@@ -699,18 +824,23 @@ async function handleCardAction(action, operatorOpenId, msgId) {
           break;
         }
         before = snapshotOf(rec);
-        await updateFields(r, { [F.review]: '有修改', [F.stage]: '修改中' });
+        await updateFields(r, { [F.review]: '有修改', [F.stage]: '修改中', ...(action.batch ? { [PC.current().notesField || '修改意见']: action.batch.note } : {}) });
         rec.review = '有修改';
         rec.stage = '修改中';
-        const editN = await notify(rec.artist, C.editCard(rec), `请修改 ${rec.episode}`);
+        const editBlocked = artistBlockReason(rec.artist);
+        const editN = editBlocked ? 0 : await notify(rec.artist, C.editCard(rec, action.batch && action.batch.note), `请修改 ${rec.episode}`);
+        batchNotification = `制作师通知 ${editN}/${rec.artist.length} 人`;
         if (editN > 0) await tellOperator(operatorOpenId, rec.artist, '制作师', '「请修改」卡片');
-        toast = '已记为一审未通过，通知制作师修改';
+        else log(`「请修改」卡没发（${editBlocked || '发送失败'}）：${rec.episode} 集`);
+        toast = editBlocked ? `已记为一审未通过；制作师通知没发（${editBlocked}）` : '已记为一审未通过，通知制作师修改';
         card = C.settledCard(`${title} · 一审未通过`, [
           `**审阅反馈**：有修改`,
           `**素材生成进展**：修改中`,
           `**制作师**：${C.atList(rec.artist)}`,
           '',
-          '已通知制作师修改。制作师使用 /upmedia 或 /driveup 上传修改版成功后，我会自动将生成进展改回“待一审”，并重新发送审阅卡片。',
+          editBlocked
+            ? `制作师通知没发（${editBlocked}），「请修改」这张卡没送出去；要通知制作师请直接跟他说。他用 /upmedia 或 /driveup 上传修改版成功后，素材生成进展会自动回到“待一审”，并重新发审阅卡片。`
+            : '已通知制作师修改。制作师使用 /upmedia 或 /driveup 上传修改版成功后，我会自动将生成进展改回“待一审”，并重新发送审阅卡片。',
         ], 'red');
         break;
       }
@@ -768,59 +898,69 @@ async function handleCardAction(action, operatorOpenId, msgId) {
 
       case 'trim_start': {
         // 剪辑师点「开始剪辑」：剪辑进度 → 剪辑中（只做标记，不发新卡）
-        if (rec.trimStage === '剪辑中' || rec.trimStage === '审片中' || rec.trimStage === '已定剪') {
-          toast = `剪辑进度已经是「${rec.trimStage}」了`;
-          card = C.settledCard(`${title} · 开始剪辑（已处理）`, [`这一集剪辑进度已经是「${rec.trimStage}」，不用重复点。`], 'grey');
+        const cur = effectiveTrim(rec);
+        if (['剪辑中', '待审片', '审片中', '已定剪'].includes(cur)) {
+          toast = `剪辑进度已经是「${cur}」了`;
+          card = C.settledCard(`${title} · 开始剪辑（已处理）`, [`这一集剪辑进度已经是「${cur}」，不用重复点。`], 'grey');
           break;
         }
         before = snapshotOf(rec);
-        await updateFields(r, { [F.trim]: '剪辑中' });
-        toast = '已记为剪辑中';
+        const wrote = await writeTrim(rec, '剪辑中');
+        toast = wrote ? '已记为剪辑中' : '已记为剪辑中（本表无「剪辑中」这一档，记在机器人这边）';
         card = C.settledCard(`${title} · 开始剪辑`, [
-          `**剪辑进度**：剪辑中`,
+          `**剪辑进度**：${wrote ? '剪辑中' : (rec.trimStage || '（空）')}`,
           `**剪辑师**：${C.atList(rec.editors)}`,
           '',
-          '剪完点「精剪完成」，我再发终审卡片给审片人。',
+          wrote
+            ? '剪完点「精剪完成」，我再发终审卡片给审片人。'
+            : '这张表的「剪辑进度」没有「剪辑中」这一档，所以表上仍是「可剪辑」；机器人这边已经记下你开始剪了，剪完点「精剪完成」。',
         ], 'blue');
         break;
       }
 
       case 'trim_done': {
-        if (rec.trimStage === '待审片' || rec.trimStage === '审片中' || rec.trimStage === '已定剪') {
-          toast = `剪辑进度已经是「${rec.trimStage}」了`;
-          card = C.settledCard(`${title} · 精剪完成（已处理）`, [`这一集剪辑进度已经是「${rec.trimStage}」，不用重复点。`], 'grey');
+        const cur = effectiveTrim(rec);
+        if (['待审片', '审片中', '已定剪'].includes(cur)) {
+          toast = `剪辑进度已经是「${cur}」了`;
+          card = C.settledCard(`${title} · 精剪完成（已处理）`, [`这一集剪辑进度已经是「${cur}」，不用重复点。`], 'grey');
           break;
         }
         before = snapshotOf(rec);
-        await updateFields(r, { [F.trim]: '待审片' });
-        rec.trimStage = '待审片';
+        const wrote = await writeTrim(rec, '待审片');
+        rec.trimEffective = effectiveTrim(rec);
         const finalN = await notify(rec.reviewers, C.finalCard(rec), `剪辑终审 ${rec.episode}`);
+        batchNotification = `终审通知 ${finalN}/${rec.reviewers.length} 人`;
         if (finalN > 0) await tellOperator(operatorOpenId, rec.reviewers, '审片人', '「剪辑终审」卡片');
-        toast = '已记为待审片，通知审片人终审';
+        toast = wrote ? '已记为待审片，通知审片人终审' : '已记为待审片（本表无此档，记在机器人这边），通知审片人终审';
         card = C.settledCard(`${title} · 精剪完成`, [
-          `**剪辑进度**：待审片`,
+          `**剪辑进度**：${wrote ? '待审片' : (rec.trimStage || '（空）')}`,
           `**审片人**：${C.atList(rec.reviewers)}`,
           '',
-          '已发终审卡片。审片人点「查看成片」后，剪辑进度会自动变成「审片中」。',
+          wrote
+            ? '已发终审卡片。审片人点「查看成片」后，剪辑进度会自动变成「审片中」。'
+            : `已发终审卡片。这张表的「剪辑进度」没有「待审片」这一档，表上仍是「${rec.trimStage || '空'}」；机器人这边已记下精剪完成，审片人点「查看成片」不会改表，看完点「剪辑通过」即定剪。`,
         ], 'orange');
         break;
       }
 
       case 'final_view': {
         // 终审卡 2.0 的「查看成片」：跳分秒帧的同时回传，这里记成审片中
-        if (rec.trimStage === '审片中' || rec.trimStage === '已定剪') {
-          toast = `剪辑进度已经是「${rec.trimStage}」了`;
-          card = C.settledCard(`${title} · 查看成片`, [`这一集剪辑进度已经是「${rec.trimStage}」，不用重复记。`], 'grey');
+        const cur = effectiveTrim(rec);
+        if (cur === '审片中' || cur === '已定剪') {
+          toast = `剪辑进度已经是「${cur}」了`;
+          card = C.settledCard(`${title} · 查看成片`, [`这一集剪辑进度已经是「${cur}」，不用重复记。`], 'grey');
           break;
         }
         before = snapshotOf(rec);
-        await updateFields(r, { [F.trim]: '审片中' });
-        toast = '已记为审片中，成片已打开';
+        const wrote = await writeTrim(rec, '审片中');
+        toast = wrote ? '已记为审片中，成片已打开' : '成片已打开（本表无「审片中」这一档，未改表）';
         card = C.settledCard2(`${title} · 审片中`, [
-          `**剪辑进度**：审片中`,
+          `**剪辑进度**：${wrote ? '审片中' : (rec.trimStage || '（空）')}`,
           `**审片人**：${C.atList(rec.reviewers)}`,
           '',
-          '审完回原消息点「剪辑通过」。',
+          wrote
+            ? '审完回原消息点「剪辑通过」。'
+            : '这张表没有「审片中」这一档，只记在机器人这边，表上的剪辑进度不变。审完回原消息点「剪辑通过」。',
         ], 'blue');
         break;
       }
@@ -839,6 +979,7 @@ async function handleCardAction(action, operatorOpenId, msgId) {
           [F.progress]: '已完成', // 三个条件齐了：素材已上传 + 一审通过 + 剪辑完成
           实际完成日期: now,
         });
+        setShadow(r, ''); // 走到表里真有的那一档了，影子状态作废
         toast = '已定剪，流程完成';
         card = C.settledCard2(`${title} · 已定剪`, [
           `**审阅反馈**：通过`,
@@ -856,6 +997,7 @@ async function handleCardAction(action, operatorOpenId, msgId) {
         card = C.settledCard('处理失败', [`没认出来的操作：${a}`], 'red');
     }
 
+    if (action.batch && batchNotification) toast = `表格已更新；${batchNotification}`;
     if (before) rememberUndo(msgId, r, a, before);
     // 优先在原卡上就地改：被点的按钮 → 撤回，其它按钮留着
     const recBefore = before
@@ -888,7 +1030,7 @@ async function handleCardAction(action, operatorOpenId, msgId) {
 
 /** 手动给某一集发一审卡片（/flow test 70） */
 async function sendReviewFor(episode) {
-  const recs = await fetchAllRecords();
+  const recs = await activeRecords();
   const rec = recs.find((r) => String(r.episode) === String(episode));
   if (!rec) return `没找到 ${episode} 集的记录（按「集数」找的）。`;
   const targets = rec.reviewers;
@@ -902,7 +1044,7 @@ async function sendReviewFor(episode) {
 
 /** 把当前所有待审记录补发一遍（/flow backfill） */
 async function backfill() {
-  const recs = await fetchAllRecords();
+  const recs = await activeRecords();
   const pending = recs.filter(isReviewCandidate);
   let ok = 0;
   for (const rec of pending) {
@@ -911,9 +1053,65 @@ async function backfill() {
   return { pending: pending.length, sent: ok };
 }
 
+/**
+ * 巡检 / 发卡的目标项目：config.json → flow.projects（项目 key 数组）。
+ * 每次现读，改完不用重启。没配或读失败 → 返回 null = 沿用老行为（全部项目）。
+ * 2026-11-03 小熊要求从《逆天萌兽2》换成《逆天萌兽3》，现在配 ["nts3"]。
+ */
+function flowProjectKeys() {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf8'));
+    const list = c.flow && c.flow.projects;
+    if (Array.isArray(list) && list.length) return list;
+  } catch (e) {
+    log('巡检项目配置读取失败，按全部项目处理：' + (e && e.message));
+  }
+  return null;
+}
+
+async function allProjectRecords() {
+  const rows = [];
+  for (const p of PC.projects()) rows.push(...await PC.run(p.key, fetchAllRecords));
+  return rows;
+}
+
+/** 只查当前巡检/发卡项目的记录（/flow test、/flow backfill、批量待办用）。
+ *  卡片按钮回调的 discover 仍走 allProjectRecords 全查，历史第二季卡片照常能点。 */
+async function activeRecords() {
+  const only = flowProjectKeys();
+  if (!only) return allProjectRecords();
+  const rows = [];
+  for (const p of PC.projects()) {
+    if (!only.includes(p.key)) continue;
+    rows.push(...await PC.run(p.key, fetchAllRecords));
+  }
+  return rows;
+}
+let projectsTicking = false;
+async function tickProjects() {
+  if (projectsTicking) return { skipped: true };
+  projectsTicking = true;
+  try {
+  let total = { scanned: 0, started: 0, reviewed: 0, failed: 0 };
+  const only = flowProjectKeys();
+  for (const p of PC.projects()) {
+    if (only && !only.includes(p.key)) continue;          // 只巡检 config.flow.projects 指定的项目
+    if (!only && p.sceneMode && !p.projectUrl) continue; // 没配时的老行为：视频目录未绑定前不自动发卡
+    // 配了项目就不再因「没绑视频目录」跳过：cards.js 会把「查看粗剪/查看成片」降级成表格链接
+    try { const stats = await PC.run(p.key, tick); for (const k of Object.keys(total)) total[k] += stats[k] || 0; }
+    catch (e) { log(`项目巡检失败 ${p.name}：${e.message}`); total.failed++; }
+  }
+  lastTick = { at: Date.now(), stats: total };
+  return total;
+  } finally { projectsTicking = false; }
+}
+const scoped = fn => (id, ...args) => PC.forRecord(id, () => fn(id, ...args), allProjectRecords);
 module.exports = {
   decorateCard,
-  startScheduler, tick,
-  getLastTick: () => lastTick, handleCardAction, fetchAllRecords, mapRecord, updateFields,
-  getRecord, sendCard, notify, flat, sendReviewFor, backfill, autoReview, reviewKey,
+  startScheduler, tick: tickProjects,
+  getLastTick: () => lastTick,
+  handleCardAction: (action, ...args) => PC.forRecord(action.r, () => handleCardAction(action, ...args), allProjectRecords),
+  fetchAllRecords: allProjectRecords, activeRecords, flowProjectKeys, mapRecord, updateFields: scoped(updateFields),
+  getRecord: scoped(getRecord), sendCard, notify, flat, sendReviewFor, backfill, effectiveTrim, setShadow,
+  autoReview: (rec, ...args) => PC.run(rec.projectKey || 'legacy', () => autoReview(rec, ...args)), reviewKey,
 };

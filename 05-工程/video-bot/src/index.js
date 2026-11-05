@@ -157,10 +157,10 @@ const TBPZ_USAGE = [
   '· /tbpz 粗剪 配置 —— 看当前分秒帧链接和写入的表格',
   '',
   '精剪批注',
-  '· /tbpz 精剪 —— 增量同步到精剪备份表',
+  '· /tbpz 精剪 / /tbpz 精剪 增量 —— 增量同步到精剪备份表（无水位时从最近24小时开始，历史补齐用全量）',
   '· /tbpz 精剪 预览 / 全量 / 全量预览 / 配置',
   '· /tbpz 精剪 写入 —— 使用最近一次精剪预览缓存写表，不重新采集',
-  '· /tbpz 精剪 中断 / /tbpz 中断 —— 停止同步并保留缓存；全量及首次同步上限 120 分钟',
+  '· /tbpz 精剪 中断 / /tbpz 中断 —— 停止同步并保留缓存；全量上限 120 分钟，增量上限 60 分钟',
   '',
   '改同步目标',
   '· /tbpz 粗剪 分秒帧 <项目链接>',
@@ -428,7 +428,7 @@ function saveQueue() {
     const list = [currentJob].concat(queue)
       .filter(serializable)
       .map((j) => ({
-        att: j.att, outName: j.outName, cmdName: j.cmdName || '',
+        att: j.att, outName: j.outName, uploadTarget: j.uploadTarget, projectKey: j.projectKey || '', cmdName: j.cmdName || '',
         by: j.by || null, notifyOpenId: j.notifyOpenId || '', queuedAt: j.queuedAt || Date.now(),
       }));
     fs.writeFileSync(QUEUE_FILE, JSON.stringify(list, null, 1));
@@ -503,7 +503,25 @@ function restoreQueue() {
   fresh.forEach((j) => enqueue({ ...j, restored: true }));
 }
 
+/**
+ * 当前上传回写的制作项目（config.json 每次现读，改完下一条视频生效，不用重启）。
+ * 2026-11-03：《逆天萌兽2》归档，上传默认回写《逆天萌兽3》的多维表格。
+ * 第三季的分秒帧链接还没给到 —— 上传目录一个字不动，仍走 config.projectUrl（/target 管的那个）。
+ * 临时回退：把 config.json 的 uploadProject 改成 "legacy" 或删掉这一行。
+ */
+function defaultUploadProject() {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf8'));
+    return c.uploadProject === 'nts3' ? 'nts3' : '';
+  } catch (e) {
+    log('默认上传项目读取失败，按 legacy 处理：' + (e && e.message));
+    return '';
+  }
+}
+
 function enqueue(job) {
+  if (!job.projectKey) job.projectKey = defaultUploadProject();
+  if (!job.uploadTarget) job.uploadTarget = target.getTarget();
   // 同一条源文件重复投（连着发三次 /upmedia 73 + 两次文件）→ 别再排一遍。
   // 2026-10-28 踩到：三份 56 MB 下载互相打断，一个都没传成。
   // 但「122-改1 / 122-改2 都按 122 传」是两个不同文件，得按顺序都传 —— 所以按来源比，
@@ -570,13 +588,14 @@ async function pump() {
       }, 45000);
     } else {
       log(`处理失败 ${job.outName}：${msg}`);
+      try { require('./admin-runtime').failed(job, msg); } catch (e) { log('失败记录保存失败：' + e.message); }
       let text = `❌ ${job.outName} 处理失败：${msg || '未知错误'}`;
       if (e && e.scopeUrl) text += `\n\n缺权限，点这个开：\n${e.scopeUrl}`;
       // 网络原因且视频还在飞书服务器上：放回待传，重发 /upmedia 即可，不用重传 89MB 的文件
       if (netDown && job.att && job.att.messageId) {
         unshiftVideo(job.att);
         if (job.cmdName && job.att.chatId) {
-          pendingCommands.set(job.att.chatId, { name: job.cmdName, expiresAt: Date.now() + WAIT_SECONDS * 1000 });
+          pendingCommands.set(job.att.chatId, { name: job.cmdName, projectKey: job.projectKey, uploadTarget: job.uploadTarget, expiresAt: Date.now() + WAIT_SECONDS * 1000 });
         }
         text += '\n\n这条视频我还留着，直接重发一次 /upmedia 就会重试（文件不用重传）。';
       }
@@ -609,10 +628,10 @@ async function pump() {
 const UPLOAD_TIMEOUT_MS = Math.max(5, Number(process.env.UPLOAD_TIMEOUT_MIN || 45)) * 60 * 1000;
 
 /** 起子进程跑上传，从 stdout 里捞最后一行 RESULT_JSON */
-function runWorker(filePath) {
+function runWorker(filePath, uploadTarget) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(__dirname, 'worker.js'), filePath], {
-      env: childEnv({ BSK_AUTO_START: '0' }),
+      env: childEnv({ BSK_AUTO_START: '0', ...(uploadTarget ? { UPLOAD_TARGET_URL: uploadTarget.projectUrl } : {}) }),
       stdio: ['ignore', 'pipe', 'pipe'],
       // 独立进程组：超时时能连 worker 里 execFileSync 起的 bsk 子进程一起收掉，
       // 不然 worker 死了、bsk 还挂在浏览器上占着会话
@@ -663,6 +682,15 @@ function runWorker(filePath) {
 
 async function runJob(job) {
   const { att, outName } = job;
+  const PC = require('./project-context');
+  const taskIdentity = require('./task-identity');
+  const project = PC.projectForTarget(job.uploadTarget.projectUrl, job.projectKey);
+  const taskId = taskIdentity.parse(outName);
+  const candidates = (await flow.fetchAllRecords()).filter(r => r.projectKey === project.key);
+  const taskRecord = taskId && project.uploadKind !== 'fine' ? taskIdentity.select(candidates, taskId) : null;
+  if (project.sceneMode && project.uploadKind !== 'fine' && !taskRecord) throw new Error('场次项目必须使用明确的集数-场次文件名');
+  job.taskBinding = taskRecord ? { recordId: taskRecord.recordId, projectKey: project.key,
+    signature: JSON.stringify([taskRecord.episode, taskRecord.scene, taskRecord.stage, taskRecord.review, taskRecord.trimStage]), label: taskIdentity.display(taskRecord) } : null;
   // 落盘就用目标名（worker 按磁盘文件名认分秒帧条目），但目录每次独立，
   // 免得两个人同一集同时下载时写同一个文件
   const destPath = job.localPath || taskTempPath(outName, att.messageId || att.driveToken);
@@ -683,7 +711,7 @@ async function runJob(job) {
   }
 
   log(`开始上传 ${att.fileName} → ${outName}`);
-  const res = await runWorker(destPath);
+  const res = await runWorker(destPath, job.uploadTarget);
   lastUpload = { at: Date.now(), file: outName, ok: !!res.ok };
 
   let text;
@@ -721,21 +749,20 @@ async function runJob(job) {
   if (job.onDone) await job.onDone(res.ok);
 
   // 上传成功后：文件名带集数的，把该集素材生成进展记为已粗剪待一审（制作师 /upmedia、/driveup 都走这里）
-  if (res.ok) await markEpisodeReady(job.chatId || (job.att && job.att.chatId), outName);
+  if (res.ok) await markEpisodeReady(job.chatId || (job.att && job.att.chatId), outName, job.taskBinding);
 }
 
 /**
  * 上传成功回写多维表格：按文件名里的集数找记录，素材生成进展 → 已粗剪待一审，并重发一审卡片。
  * 已经在已完成并上传/已定剪的集不回退（那属于重传终稿版本）。
  */
-async function markEpisodeReady(chatId, outName) {
+async function markEpisodeReady(chatId, outName, binding) {
   try {
-    const ep = reviewsync.episodeOf(outName);
-    if (ep == null) return;
-    const recs = await flow.fetchAllRecords();
-    const rec = recs.find((r) => String(r.episode) === String(ep));
-    if (!rec) {
-      log(`上传回写：表里没有 ${ep} 集的记录，跳过`);
+    if (!binding) return;
+    const rec = await flow.getRecord(binding.recordId);
+    const ep = binding.label;
+    if (JSON.stringify([rec.episode, rec.scene, rec.stage, rec.review, rec.trimStage]) !== binding.signature) {
+      if (chatId) sendText(chatId, `视频已上传，但 ${ep} 的表格状态在上传期间发生变化，本次不覆盖，请核对任务。`);
       return;
     }
     if (rec.stage === '已完成并上传' || rec.trimStage === '已定剪') {
@@ -743,8 +770,9 @@ async function markEpisodeReady(chatId, outName) {
       return;
     }
     if (rec.stage !== '已粗剪待一审') {
-      await flow.updateFields(rec.recordId, { 素材生成进展: '已粗剪待一审' });
+      await flow.updateFields(rec.recordId, { 素材生成进展: '已粗剪待一审', 审阅反馈: '未审阅' });
       rec.stage = '已粗剪待一审';
+      rec.review = '未审阅';
       if (chatId) sendText(chatId, `📋 已把 ${ep} 集的「素材生成进展」记为已粗剪待一审。`);
     }
     // 不管状态改没改，都补发/确保一审卡片在（防重复由 flowState 去重）
@@ -758,6 +786,7 @@ async function markEpisodeReady(chatId, outName) {
     }
   } catch (e) {
     log('上传回写失败：' + ((e && e.message) || e));
+    if (chatId) sendText(chatId, '视频上传后回写失败，请核对任务：' + e.message);
   }
 }
 
@@ -803,7 +832,7 @@ function onBaseCommand(text, msg) {
     return;
   }
 
-  editField(rest)
+  require('./project-context').run(/逆天萌兽3|nts3/i.test(rest) ? 'nts3' : 'legacy', () => editField(rest))
     .then((reply) => sendText(chatId, reply))
     .catch(async (e) => {
       log('改表失败：' + (e && e.message));
@@ -826,6 +855,12 @@ function onCommand(cmd, msg, operatorId) {
   }
 
   // /upmedia 67 <云盘链接> —— 一条消息把文件也带上
+  const projectMatch = /^(?:逆天萌兽3|nts3)\s+(.+)$/i.exec(cmd.name);
+  if (projectMatch) {
+    const p = require('./project-context').projects().find(p => p.key === 'nts3');
+    if (!p?.sharedUploadUrl) { sendText(chatId, '第三季共享上传目录尚未配置'); return; }
+    cmd = {...cmd, name: projectMatch[1], projectKey: 'nts3', uploadTarget: target.parseTarget(p.sharedUploadUrl)};
+  }
   const inlineLink = drive.parseLink(cmd.name);
   if (inlineLink) {
     const clean = cmd.name.replace(inlineLink.url, '').replace(/^[\s:：,，-]+/, '').trim();
@@ -842,7 +877,7 @@ function onCommand(cmd, msg, operatorId) {
     };
     const outName = targetFileName(clean, driveAtt.fileName);
     sendText(chatId, `好，从云盘拉这个文件，传成「${outName}」，开始。`);
-    enqueue({ att: driveAtt, outName, by: { openId: operatorId } });
+    enqueue({ att: driveAtt, outName, projectKey: cmd.projectKey, uploadTarget: cmd.uploadTarget, by: { openId: operatorId } });
     return;
   }
 
@@ -851,12 +886,12 @@ function onCommand(cmd, msg, operatorId) {
     const outName = targetFileName(cmd.name, att.fileName);
     pendingCommands.delete(chatId);
     sendText(chatId, `好，把 ${att.fileName} 传成「${outName}」，开始。`);
-    enqueue({ att, outName, cmdName: cmd.name, by: { openId: operatorId } });
+    enqueue({ att, outName, projectKey: cmd.projectKey, uploadTarget: cmd.uploadTarget, cmdName: cmd.name, by: { openId: operatorId } });
     return;
   }
 
   // 命令先到：留个坑，等视频
-  pendingCommands.set(chatId, { name: cmd.name, expiresAt: Date.now() + WAIT_SECONDS * 1000 });
+  pendingCommands.set(chatId, { name: cmd.name, projectKey: cmd.projectKey, uploadTarget: cmd.uploadTarget, expiresAt: Date.now() + WAIT_SECONDS * 1000 });
   sendText(chatId, `好，把视频发到聊天框，我传成「${targetFileName(cmd.name, '.mp4')}」。（${Math.round(WAIT_SECONDS / 60)} 分钟内有效）\n如果文件在云盘收件夹里，改用：/driveup ${cmd.name}`);
 }
 
@@ -887,7 +922,7 @@ function onVideo(att) {
     pendingCommands.delete(att.chatId);
     const outName = targetFileName(pendingCmd.name, att.fileName);
     sendText(att.chatId, `收到 ${att.fileName}，传成「${outName}」，开始。`);
-    enqueue({ att, outName });
+    enqueue({ att, outName, projectKey: pendingCmd.projectKey, uploadTarget: pendingCmd.uploadTarget, cmdName: pendingCmd.name });
     return;
   }
 
@@ -915,7 +950,7 @@ function onMessage(data) {
   // 每条进来的消息都记一行，方便判断「没回」是没收到还是处理出错
   log(`收到消息 [${msg.message_type || msg.msg_type}] ${(text || '').replace(/\s+/g, ' ').slice(0, 40) || '(非文本)'}`);
 
-  // /tbpq —— 测试项目排期同步（显式命令触发，不挂入审阅流程）
+  // /tbpq —— 独立项目排期同步（显式命令触发，不挂入审阅流程）
   if (text && /^\/tbpq(?:\s+.*)?$/i.test(text.trim())) {
     if (!chatAllowed(msg.chat_type || 'p2p', msg.chat_id)) return;
     const arg = text.trim().replace(/^\/tbpq\s*/i, '').trim();
@@ -924,9 +959,27 @@ function onMessage(data) {
       return;
     }
     const dryRun = arg === '预览';
-    schedulesync.run({ dryRun })
+    schedulesync.run({ dryRun, onProgress: (t) => sendText(msg.chat_id, t) })
       .then(result => sendText(msg.chat_id, schedulesync.summary(result)))
       .catch(error => { log('/tbpq 失败：' + error.message); sendText(msg.chat_id, '排期同步未完成：' + error.message); });
+    return;
+  }
+
+  const sceneDir = text && /^\/项目目录\s+逆天萌兽3\s+(粗剪|精剪)\s+(https:\/\/\S+)$/.exec(text.trim());
+  if (sceneDir) {
+    if (operatorId !== OWNER_OPEN_ID || (msg.chat_type || 'p2p') !== 'p2p') {
+      sendText(msg.chat_id, '请由管理员私聊绑定项目目录。'); return;
+    }
+    try {
+      const t = target.parseTarget(sceneDir[2]);
+      const f = path.join(cfg.ROOT, 'config.json');
+      const c = JSON.parse(fs.readFileSync(f, 'utf8'));
+      const project = c.sceneProjects.find(p => p.key === 'nts3');
+      project[sceneDir[1] === '粗剪' ? 'projectUrl' : 'trimPreviewUrl'] = t.projectUrl;
+      c[sceneDir[1] === '粗剪' ? 'reviewSyncNts3' : 'reviewSyncNts3FineCut'].mediatrackUrl = t.projectUrl;
+      fs.writeFileSync(f, JSON.stringify(c, null, 2) + '\n');
+      sendText(msg.chat_id, '已绑定《逆天萌兽3》' + sceneDir[1] + '目录。上传前用 /target 选择相应目录。');
+    } catch (e) { sendText(msg.chat_id, '目录绑定失败：' + e.message); }
     return;
   }
 
@@ -936,8 +989,8 @@ function onMessage(data) {
     const chatType = msg.chat_type || 'p2p';
     if (!chatAllowed(chatType, chatId)) return;
     const { profile, arg, named } = reviewsync.parseCommand(text.trim().replace(/^\/tbpz\s*/i, '').trim());
-    const command = profile === 'fineCut' ? '/tbpz 精剪' : '/tbpz 粗剪';
-    const label = profile === 'fineCut' ? '精剪批注' : '粗剪批注';
+    const command = reviewsync.commandFor(profile);
+    const label = ['fineCut','nts3FineCut'].includes(profile) ? '精剪批注' : '粗剪批注';
     const conf = reviewsync.readConfig(profile);
 
     // 只发 /tbpz（既没写分支也没写动作）：不动手，先把用法说清楚
@@ -974,7 +1027,7 @@ function onMessage(data) {
         `· ${command} 全量预览 —— 全量只读不写`,
         `· ${command} 写入 —— 把最近一次预览缓存写表，不重新采集`,
         `· ${command} 中断 —— 停止同步，保留缓存和已写入记录`,
-        '采集上限：全量 / 首次同步 120 分钟，普通增量 25 分钟。',
+        '采集上限：全量 120 分钟，增量 60 分钟（首次增量从最近24小时开始）。',
         '',
         '改目标：',
         `· ${command} 分秒帧 <项目链接>`,
@@ -1009,8 +1062,8 @@ function onMessage(data) {
       return;
     }
 
-    if (!/^(?:执行|写入|预览|全量(?:\s*预览)?)?$/.test(arg)) {
-      sendText(chatId, `用法：${command} [写入|预览|全量|全量预览|配置]`);
+    if (!/^(?:执行|写入|增量(?:\s*预览)?|预览|全量(?:\s*预览)?)?$/.test(arg)) {
+      sendText(chatId, `用法：${command} [增量|写入|预览|全量|全量预览|配置]`);
       return;
     }
 
@@ -1023,12 +1076,12 @@ function onMessage(data) {
 
     // 防重入：一轮同步要好几分钟，跑着的时候别再开第二轮
     if (tbpzRunning) {
-      sendText(chatId, '⏳ 批注同步已经在跑了；全量或首次同步最多 120 分钟。可发 /tbpz 中断 停止。');
+      sendText(chatId, '⏳ 批注同步已经在跑了；全量最多 120 分钟，增量最多 60 分钟。可发 /tbpz 中断 停止。');
       return;
     }
 
     const writeCached = arg === '写入';
-    const dryRun = /^预览$/.test(arg) || /^全量\s*预览$/.test(arg);
+    const dryRun = /^(?:增量\s*)?预览$/.test(arg) || /^全量\s*预览$/.test(arg);
     const full = /^全量/.test(arg);
     tbpzRunning = true;
     tbpzJob = { profile, chatId, controller: new AbortController() };
@@ -1318,6 +1371,13 @@ function onMessage(data) {
     return;
   }
 
+  if (text && /^(?:\/)?批量(审阅|剪辑)$/.test(text.trim())) {
+    if (!chatAllowed(msg.chat_type || 'p2p', msg.chat_id)) return;
+    require('./batch').open(operatorId, text.includes('审阅') ? 'review' : 'trim')
+      .catch(e => sendText(msg.chat_id, '打开批量卡片失败：' + e.message));
+    return;
+  }
+
   // /flow —— 流程巡检；/flow test 70 —— 给某集发一审卡片；/flow backfill —— 补发全部待审
   const flowCmd = text && /^\/flow(\s+.*)?$/i.exec(text.trim());
   if (flowCmd) {
@@ -1502,6 +1562,11 @@ async function main() {
       if (value.a === 'restart_bot') {
         return requestRestart({ operator, chatId, openId: operator });
       }
+      if (String(value.a || '').startsWith('batch_') || String(data.action?.name || '').startsWith('batch_submit_')) {
+        require('./batch').dispatch(data.action, operator, msgId)
+          .catch(e => require('./feishu').sendTextTo(operator, '批量操作失败：' + e.message));
+        return { toast: { type: 'info', content: '已收到，正在处理…' } };
+      }
       if (!value.a || !value.r) return { toast: { type: 'info', content: '没有可执行的操作' } };
       flow.handleCardAction(value, operator, msgId)
         .catch((e) => log('卡片处理异常：' + ((e && e.message) || e)));
@@ -1560,3 +1625,14 @@ main().catch((e) => {
   log('❌ 启动失败：' + (e && e.message));
   process.exit(1);
 });
+
+// 本机管理台只通过持久命令请求既有队列，不启动第二条上传链路。
+setInterval(() => {
+  try {
+    require('./admin-runtime').tick({
+      current: currentJob ? { name: currentJob.outName, queuedAt: currentJob.queuedAt } : null,
+      queue: queue.map(j => ({ name: j.outName, queuedAt: j.queuedAt })),
+      sync: tbpzRunning || (require('./schedulesync').isRunning?.() || false),
+    }, enqueue);
+  } catch (e) { log('管理台状态写入失败：' + e.message); }
+}, 2000).unref();

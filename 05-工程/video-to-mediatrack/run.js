@@ -21,8 +21,8 @@ const BSK = path.join(HOME, '.local/bin/bsk');
 
 /** 乌小河与用户的私聊 + 群「乌小熊」 */
 const CHAT_IDS = [
-  'oc_8f5af0785fc3b54e05f6717ef54e1f84',
-  'oc_89cd2e64c440682663f4c40591f9ead4',
+  '[已脱敏]',
+  '[已脱敏]',
 ];
 /** 分秒帧目标项目：2分钟了解分秒帧 */
 const PROJECT_URL = 'https://app.mediatrack.cn/projects/2108023947898388480/files';

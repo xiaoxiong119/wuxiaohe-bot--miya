@@ -32,7 +32,7 @@ function parseTarget(url) {
 
 function getTarget() {
   const cfg = readConfig();
-  const url = cfg.projectUrl || '';
+  const url = process.env.UPLOAD_TARGET_URL || cfg.projectUrl || '';
   let parsed = { projectId: '', folderId: '' };
   try {
     parsed = parseTarget(url);

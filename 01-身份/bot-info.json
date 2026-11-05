@@ -1,7 +1,11 @@
 {
-  "bot": {
-    "name": "乌小河",
-    "app_id": "请在部署时填写",
+  "ok": true,
+  "identity": "bot",
+  "data": {
+    "activate_status": 2,
+    "app_name": "乌小河",
+    "avatar_url": "https://s1-imfile.feishucdn.com/static-resource/v1/v3_0016n_ffc2a776-451f-4250-a52f-9d58541c6bbg",
+    "ip_white_list": [],
     "open_id": "请在部署时填写"
   }
 }

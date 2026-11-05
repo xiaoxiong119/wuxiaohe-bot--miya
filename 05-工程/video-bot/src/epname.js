@@ -74,6 +74,8 @@ function isRev(name) {
  * 但 57-2.mp4 → 572 ≠ 57，分卷不会被当成同一集。
  */
 function subjectKey(name) {
+  const task = require('./task-identity').parse(stripRev(name));
+  if (task) return `${task.episode}${task.scene === null ? '' : ':' + task.scene}${task.whole ? ':whole' : ''}`;
   let s = String(name || '').replace(/\.[^.]+$/, '');
   s = stripRev(s);
   s = s.replace(/^《[^》]*》\s*/, '');
@@ -85,9 +87,7 @@ function subjectKey(name) {
 
 /** 从文件名里取集数（第一个数字），给回写多维表格用 */
 function episodeOf(name) {
-  const base = path.basename(String(name || ''), path.extname(String(name || '')));
-  const m = /\d{1,4}/.exec(base);
-  return m ? Number(m[0]) : null;
+  return require('./task-identity').parse(name)?.episode ?? null;
 }
 
 module.exports = { stripRev, isRev, subjectKey, episodeOf };

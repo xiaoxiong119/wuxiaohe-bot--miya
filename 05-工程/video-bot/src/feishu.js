@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const cfg = require('./config');
 const { log } = require('./log');
+const policy = require('./notification-policy');
 
 /**
  * 懒初始化：没填凭证时不要在建模块阶段就崩，
@@ -18,8 +19,27 @@ function getClient() {
       throw new Error('还没填 .env 里的 FEISHU_APP_ID / FEISHU_APP_SECRET');
     }
     _client = new Lark.Client({ appId: cfg.APP_ID, appSecret: cfg.APP_SECRET });
+    // 在统一出口拦截，覆盖流程模块直接调用 SDK 的通知；抛错让调用方不计为发送成功。
+    const create = _client.im.v1.message.create.bind(_client.im.v1.message);
+    _client.im.v1.message.create = async (request, ...args) => {
+      assertPrivateNotificationAllowed(request);
+      return create(request, ...args);
+    };
   }
   return _client;
+}
+
+/** 每次发送读取持久配置，后续调整免通知名单无需重启。 */
+function assertPrivateNotificationAllowed(request) {
+  if (request?.params?.receive_id_type !== 'open_id') return;
+  const config = JSON.parse(fs.readFileSync(path.join(cfg.ROOT, 'config.json'), 'utf8'));
+  const feature = policy.context.getStore() || 'receipt';
+  const reason = policy.reason(config, request?.data?.receive_id, feature);
+  if (reason) {
+    const error = new Error(reason);
+    error.code = 'PRIVATE_NOTIFICATION_OPT_OUT';
+    throw error;
+  }
 }
 
 /** 去掉文件名里的非法字符，防路径穿越 */

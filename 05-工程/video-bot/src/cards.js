@@ -25,7 +25,7 @@ function projectUrl() {
 function epTitle(rec) {
   const project = rec.project || '《逆天萌兽2》';
   const ep = rec.episode || '?';
-  return `${project} 第 ${ep} 集`;
+  return `${project} 第 ${ep} 集${rec.scene ? ' · 第 ' + require('./task-identity').sceneOf(rec.scene) + ' 场' : ''}`;
 }
 
 function people(names) {
@@ -72,9 +72,9 @@ function reviewCard(rec) {
         actions: [
           {
             tag: 'button',
-            text: { tag: 'plain_text', content: '查看粗剪' },
+            text: { tag: 'plain_text', content: rec.sceneMode && !rec.projectUrl ? '查看任务（视频目录待配置）' : '查看粗剪' },
             type: 'default',
-            url: projectUrl(),
+            url: rec.projectUrl || rec.tableUrl || projectUrl(),
           },
           {
             tag: 'button',
@@ -88,6 +88,7 @@ function reviewCard(rec) {
             type: 'danger',
             value: { a: 'review_fail', r: rec.recordId },
           },
+          { tag: 'button', text: { tag: 'plain_text', content: '批量审阅' }, value: { a: 'batch_open', kind: 'review' } },
         ],
       },
     ],
@@ -129,7 +130,7 @@ function uploadCard(rec) {
             tag: 'button',
             text: { tag: 'plain_text', content: '查看分秒帧' },
             type: 'default',
-            url: projectUrl(),
+            url: rec.projectUrl || rec.tableUrl || projectUrl(),
           },
         ],
       },
@@ -166,9 +167,9 @@ function editCard(rec, feedback) {
         actions: [
           {
             tag: 'button',
-            text: { tag: 'plain_text', content: '查看粗剪' },
+            text: { tag: 'plain_text', content: rec.sceneMode && !rec.projectUrl ? '查看任务（视频目录待配置）' : '查看粗剪' },
             type: 'default',
-            url: projectUrl(),
+            url: rec.projectUrl || rec.tableUrl || projectUrl(),
           },
         ],
       },
@@ -207,6 +208,7 @@ function trimCard(rec) {
             type: 'default',
             value: { a: 'trim_start', r: rec.recordId },
           },
+          { tag: 'button', text: { tag: 'plain_text', content: '批量剪辑' }, value: { a: 'batch_open', kind: 'trim' } },
           {
             tag: 'button',
             text: { tag: 'plain_text', content: '精剪完成' },
@@ -217,7 +219,7 @@ function trimCard(rec) {
             tag: 'button',
             text: { tag: 'plain_text', content: '查看分秒帧' },
             type: 'default',
-            url: projectUrl(),
+            url: rec.projectUrl || rec.tableUrl || projectUrl(),
           },
         ],
       },
@@ -231,6 +233,13 @@ function trimCard(rec) {
  * 这样点「查看成片」既打开分秒帧，又能把剪辑进度改成「审片中」。
  */
 function finalCard(rec) {
+  // 有的表（逆天萌兽3）的「剪辑进度」没有「审片中」这一档，
+  // 卡片不能说「会把剪辑进度记成审片中」，只能照这张表实际能写的说。
+  const canReviewing = !rec.cap || rec.cap.reviewing !== false;
+  const eff = rec.trimEffective || rec.trimStage;
+  const trimLine = eff && eff !== rec.trimStage
+    ? `${rec.trimStage || '（空）'}（机器人这边记到「${eff}」，这张表没有这一档，写不进表）`
+    : (rec.trimStage || '（空）');
   return {
     schema: '2.0',
     config: { update_multi: true },
@@ -243,9 +252,11 @@ function finalCard(rec) {
         {
           tag: 'markdown',
           content: [
-            '剪辑师已完成精剪。点「查看成片」打开分秒帧，同时把剪辑进度记成「审片中」；看完点「剪辑通过」。',
+            canReviewing
+              ? '剪辑师已完成精剪。点「查看成片」打开分秒帧，同时把剪辑进度记成「审片中」；看完点「剪辑通过」。'
+              : '剪辑师已完成精剪。点「查看成片」打开分秒帧（这张表的「剪辑进度」没有中间档位，不会改表）；看完点「剪辑通过」。',
             '',
-            line('剪辑进度', rec.trimStage),
+            line('剪辑进度', trimLine),
             line('剪辑师', atList(rec.editors)),
             line('审片人', atList(rec.reviewers)),
           ].join('\n'),
@@ -263,7 +274,7 @@ function finalCard(rec) {
                   type: 'primary',
                   text: { tag: 'plain_text', content: '查看成片' },
                   behaviors: [
-                    { type: 'open_url', default_url: trimPreviewUrl() },
+                    { type: 'open_url', default_url: rec.trimPreviewUrl || rec.tableUrl || trimPreviewUrl() },
                     { type: 'callback', value: { a: 'final_view', r: rec.recordId } },
                   ],
                 },

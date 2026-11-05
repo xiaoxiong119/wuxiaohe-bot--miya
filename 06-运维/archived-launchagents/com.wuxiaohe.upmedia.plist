@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.wuxiaohe.upmedia</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/fanxiaoli/.workbuddy/binaries/node/versions/22.22.2-6/bin/node</string>
+        <string>/Users/fanxiaoli/wuxiaohe-upmedia/daemon.js</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/fanxiaoli/wuxiaohe-upmedia</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/fanxiaoli/wuxiaohe-upmedia/logs/daemon.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/fanxiaoli/wuxiaohe-upmedia/logs/daemon.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/fanxiaoli/.local/bin:/Users/fanxiaoli/.workbuddy/binaries/node/versions/20.18.0/bin:/Users/fanxiaoli/.workbuddy/binaries/node/versions/22.22.2-6/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>BSK_AUTO_START</key>
+        <string>0</string>
+        <key>HOME</key>
+        <string>/Users/fanxiaoli</string>
+    </dict>
+</dict>
+</plist>

@@ -2,6 +2,128 @@
 
 只记「改了机器人的什么」，不记日常对话。倒序。
 
+## 2026-11-05 · 每日 999 流程体检改到《逆天萌兽3》的表 + 修好天天报红
+- 根因：11-03 巡检目标切到第三季后，999 测试记录还留在第二季那张表里。巡检只扫 nts3，永远翻不到它 → 「自动置进行中/生成中」「待一审卡片」两步必挂（11-04、11-05 连续两天）。体检每小时报一次红就是这一项。
+- `scripts/selftest-999.js`：整条流程放进目标项目上下文（`project-context.run`），目标 = `config.flow.projects[0]`（现为 nts3）；找 999 改用 `activeRecords()` 只查目标表；新建记录补场次=1、《项目名》=《逆天萌兽3》。
+- 同时修掉几个老毛病：①「剪辑进度」断言改用 `trimEffective`（第三季表没有 剪辑中/待审片/审片中 三档，走影子状态）；②巡检抢先把 待开始 翻成 进行中 不再判重置失败；③自动置进行中改为轮询表状态，日志只当佐证（11-03 的竞态）；④读记录改成长超时（飞书单条读现在能拖到 20 多秒）+ 3 次重试；⑤卡片可能由巡检代发，buf 和 bot.log 都算；⑥连跑两次时撞上「5 分钟内发过」冷却算通过。
+- `src/health.js`：体检的「多维表格读取」改查巡检真正在用的那张表（`config.flow.projects[0]`），不再查第二季那张。
+- 验证：连跑三次，最后一次 13/13 全绿、`体检通过`；999 记录 `reczz28Vp8xjk6qL` 建在第三季表里。10:13 已重启（pid 83592）。
+
+## 2026-11-05 · /tbpq 排期同步加阶段进度反馈
+- `/tbpq` 从发命令到出结果中间全程静默，现在每个阶段实时发进度：开始读取源排期表 → 读到 N 集 / M 个分段 → 比对完成（新增/更新/删除条数）→ 写入中 x/y 条 → 补积分统计行。预览模式只发读取和比对两条。
+- 没有改成字面「一边读一边写」：源排期是一次 API 快照几秒读完，且必须全表校验通过才允许写（颜色冲突 / 分段重复中途发现就会写一半留在表里），保持原子性。批注同步（/tbpz）已在此前改成真正的边读边写。
+
+## 2026-11-04 · 批注同步改成「边读边写」
+
+- 原来：整轮采集全部跑完 → 一次性解析 → 一次性写表。66 个视频的全量要空等半小时才见数据，中途断了只能靠预览缓存补救。
+- 现在：采集脚本本来就每读完一个视频落一行，`reviewsync.run()` 在采集期间每 20 秒消化一次新行 —— 解析 → 去重 → 直接写表。进度消息带上「已写表 N 条」。
+- 细节：表里已有键在采集开始前读一次；新增行先查「本轮已见（seenSlot）+ 表里已有（seen）」再写，同一时间码同内容的重复批注不会写两条；写表按顺序串行、单个视频失败不拖垮整轮；水位口径不变（采集没成功收尾或 written < fresh 就不推）；中断时已写的行留在表里（下轮按内容去重），未读部分保留预览缓存。
+- 验证：dryRun 2 视频/6 条全对；真实写 6/6 成功、台账正常。17:58 已重启（pid 47957）。
+- ⚠️ 事故记录：17:40 小熊发的 `/tbpz 精剪 全量`（旧父进程 pid 6057）在 17:58 重启时被带走，采集器（detached 子进程 8638）还在跑 —— 采完没人写表。处理：等采集器退出后用它的输出文件走 `collectedFile` 路径补写。教训：**重启机器人前先看 tbpzRunning / 有没有在跑的 tbpz-collect 进程**。
+
+## 2026-11-04 · 精剪批注同步改用审片空间采集器 v005
+
+- 现场：小熊把精剪批注源换成审片空间链接 `reviews/2117594932909707264?fileId=…&inviteid=…`，跑 `/tbpz 精剪 全量` 回「视频 0 个 · 批注 0 条」，日志 `SCANNED steps=80 / MODE 全量 ALL_CARDS 0 BADGED 0 TARGETS 0`。
+- 根因两条：① **bsk 把这些标签页判成「共享页」**，每次 `evaluate` / `navigate` 不带 `cooperate sync` 的 `context`+`observation` 就直接报错，v004 把报错吞成空字符串 → 页面明明 130 张卡，枚举出 0 张。② 审片空间的排序菜单只有 文件名称/文件类型/文件大小/文件名A-Z/Z-A，**没有「更新时间/由近到远」**，增量的「滚过边界就停」用不了。
+- 新增 `scripts/tbpz-collect_v005.sh`（v004 原样保留）：所有浏览器读写改走 `ev()`/`nav()`，失败自动 `cooperate sync` 重试一次；列表就绪改成等 `div.item` 出现（最多 40s），不再固定 sleep 7；无「更新时间」排序时 `SORT_TS=0`，整张列表扫完再按卡片日期过滤增量；读批注前先等面板出现「筛选」（审片播放页先渲染播放器，body 一开始只有「查看」）；回列表用 `navigate` 到原链接，不用 `navigate-back`。
+- 加保险：`ALL_CARDS 0` 时脚本 `exit 4`，上层按「采集失败」处理，不推增量水位（以前 0 张卡也 exit 0 → 水位照推）。
+- `src/reviewsync.js`：链接含 `/reviews/` 时用 v005，项目文件页仍用 v004。
+- 验证：v005 直采 `2.mp4 / 3.mp4 / 4.mp4` → 各 3/3、3/3、2/2 条，作者/时间码/正文/日期全对；`ALL_CARDS 130 BADGED 66`。17:37 `restart.sh` 已重启（pid 6057），长连接正常。
+
+## 2026-11-04 · 精剪批注同步的分秒帧链接去掉 `type=0`
+
+- `config.json → reviewSyncFineCut.mediatrackUrl`（精剪批注 /tbpz 精剪 线）链接去掉尾部 `&type=0`，其余参数不变。
+- 纯配置改动，`reviewsync.js` 每轮 `readConfig()` 现读，不用重启。
+
+## 2026-11-03 · 巡检和发卡目标换成《逆天萌兽3》的多维表格
+
+- 小熊要求：流程巡检与自动发卡的目标表从《逆天萌兽2》换成《逆天萌兽3》。
+- 原来 `flow.tickProjects()` 遍历所有项目，但 `sceneMode && !p.projectUrl` 会跳过第三季（视频目录未绑定），日志一直是「扫 130 条」= 第二季表；`/flow test`、`/flow backfill` 也跑在默认 legacy 上下文。
+- `config.json → flow.projects: ["nts3"]`（每次巡检现读，改完不用重启；删掉这项回到「全部项目」老行为）。
+- `src/flow.js`：新增 `flowProjectKeys()`（读 flow.projects）与 `activeRecords()`（只查指定项目的记录）；`tickProjects()` 改为只巡检 `flow.projects` 里的项目、不再因「没绑视频目录」跳过；`sendReviewFor()` / `backfill()` 改用 `activeRecords()`。
+- `src/batch.js`：批量待办改用 `flow().activeRecords()`（带 fakeFlow 兼容兜底），只列第三季待办。
+- **按钮回调仍全查**：`handleCardAction` / `scoped` 的 discover 继续用 `allProjectRecords()`，历史第二季卡片照常能点；导出的 `fetchAllRecords` 也仍是全查（上传匹配、管理台通讯录、999 自检不受影响）。
+- 卡片链接不用改：`cards.js` 早有降级 —— `rec.sceneMode && !rec.projectUrl` 时按钮写「查看任务（视频目录待配置）」、`url = rec.tableUrl || projectUrl()`，第三季卡会打开第三季多维表格；终审卡「查看成片」同理。等第三季分秒帧链接给到再指向视频。
+- 验证：语法检查 + `flowProjectKeys()` → `["nts3"]`；`test-scene-flow.js` / `test-status-vocab.js` / `test-batch.js` 三个回归全绿。
+- **18:07:14 已重启（launchd kickstart，pid 84238）**。重启前日志「巡检：扫 130 条」，重启后「巡检：扫 147 条」= 第三季表；开工 0、发卡 0、失败 0，长连接正常。切换时队列为空，没中断上传。
+- 保持原样：`config.projectUrl`（上传目录，第二季粗剪）、`/target`、`/base`（仍指 ✅任务管理）、`/tbpz` 批注同步、`/tbpq` 排期同步、云盘收件夹、整点体检读表、每日 8:30 的 999 自检集。
+
+## 2026-11-03 · /tbpq 修复「源排期读取不完整」+ 新排期表换配色自适应
+
+- 小熊要求把 /tbpq 云文档链接换成 `.../wiki/C9e8wDuwnipykakUc2Pcv2RMnXb?sheet=gjnGzy`、目标多维表格不变并重新同步；随后他发 /tbpq 收到「排期同步未完成：源排期读取不完整，未写表」。**链接本来就是这个**：wiki 节点解析出的 `obj_token` = `KOlBsqBnIhDI2ftmEQWcPETintd`，与 `spreadsheetToken` 一致，`sheetId` 也是 `gjnGzy`；目标 `appToken` / `tableId` / `targetUrl` 全未动。
+- 报错根因：源子表从 24 列扩到 26 列（新增「素材断档缓冲」、排期延到 12/2），`sheets +cells-get --include value,style` 单次约 127 万字符，超过 lark-cli 默认 `--max-chars 500000`，CLI 返回 `has_more=true` / `ranges[0].truncated=true`（只回 194/215 行），`parseSource` 的保护检查直接抛错。
+- `src/schedulesync.js` 新增 `cellsGetFull()`：`--output-path` 把完整 payload 落盘（上限自动升到 20M）、校验回执 `complete` 后读回，保持单 range / 单 revision 假设。临时文件放自身 `logs/`——CLI 只允许 cwd / /tmp / ~/files，`os.tmpdir()` 的 `/var/folders/...` 会被拒。源表与布局 revision 不一致时自动重读，最多 3 轮。
+- 新排期表把制作师配色整批换掉（旧映射 `#ad82f7`=殷紫昕、`#f57ac0`=冯阳 与新表冲突，另有新色 `#c3dd40` / `#fad355`）。新增 `inferPeople()`：按每段首格的姓名简称（阳/乐/蓓/蕊/昕/杰）动态推断「颜色 → 制作师」，`config.people` 退为兜底；同一颜色出现两个简称立即停写。`personAliases` 补「蕊」=陈蕊，`config.people` 同步更新为新配色兜底；`SPECIAL_COL_RE` 补「缓冲」，R 列不再被当拍摄日。
+- `plan()` 放宽分段名校验：**同集内**允许把旧分段名改成新名（第 9/16/31/73/132/139 集由两段合并、第 63 集重新拆段），跨集仍拒绝；按既有规则不删除任何记录。
+- 真同步结果：145 集 / 146 个分段，新增 1、更新 145、不变 0、删除 0；积分补 1 行；第 78 集源表空白跳过。写入后回读校验 `verified=true`，报告 `logs/tbpq-1793699842819-sync.json`。目标表里 6 条源表已不存在的旧分段按既有规则保留，未删。
+- 测试：`scripts/test-schedule-sync_v002.js`（v001 的断言未适配 `plan()` 新增的 `remove` 字段，按版本规则另存 v002 修正），5 组全 PASS。已记 note、已重启（pid 81545）。
+
+## 2026-11-03 · 《逆天萌兽2》归档，上传切到《逆天萌兽3》
+
+- 小熊确认：第二季项目结束归档，上传功能开始做第三季；第三季目标多维表格 `https://icnbott7dtg3.feishu.cn/wiki/EmzgwaiEsivhUbkBQTAcYAADnHH?table=tblw1H7Pqfk0y5rC&view=vewXxBNTOK`；**第三季分秒帧链接未给到**，上传目录等其他功能的链接一律保持原样。
+- 归档：`05-工程/video-bot/backups/archive-nts2-20261103/` 存改前 config.json、flow-state、state、releases、tbpz 日志、两份 help；`归档说明.md` 列清第二季全部分秒帧/表格/云盘链接、变更边界、待办与回退方法。链接不删不停。
+- `config.json`：新增 `projectStatus`（当前=《逆天萌兽3》/ 归档=《逆天萌兽2》/ 待办）与 `uploadProject: "nts3"`；`sceneProjects[0].tableUrl` 补齐 `&view=vewXxBNTOK`。**其余所有链接一个字没动**（`projectUrl`、`legacyProjectUrl`、`legacyTrimPreviewUrl`、`base`、`reviewSync*`、`reviewSyncNts3*`、`scheduleSync`、`driveInbox`、`targetNames`）。
+- `src/index.js`：`enqueue()` 加 `defaultUploadProject()`，上传任务没显式指定项目时默认回写第三季的表（`Rwp6bwiyMabvxtsBd11crGcxnlc` / `tblw1H7Pqfk0y5rC`，按集数-场次匹配）。上传目录仍走 `config.projectUrl`（`target.getTarget()`），`/target` 行为不变；`/upmedia 逆天萌兽3 …` 显式前缀照旧。把 `uploadProject` 改成 `legacy` 即回退。
+- `sceneProjects[0].projectUrl` / `trimPreviewUrl` 保持空 —— 第三季的表不会被自动巡检发卡，审阅流程行为不变。
+- `help.md` / `help-lite.md` / `02-命令/斜杠命令.md` 同步当前项目、第三季命名规则与分秒帧链接待补说明；`scripts/note.js` 记一条待发布。
+- 验证：语法检查 + `projectForTarget(config.projectUrl, 'nts3')` 实测命中 nts3 / rough / `tblw1H7Pqfk0y5rC`，不带项目时仍命中 legacy。
+- `src/index.js` 改的是源码；**17:57:47 launchd 已重启（pid 81545），新进程已加载本改动，无需再重启**。日志确认：巡检仍只扫第二季的 130 条（第三季表不被自动发卡）、上传目标仍是第二季粗剪、`/base` 仍指 ✅任务管理 —— 其他功能行为不变。切换时队列为空（admin-runtime `current=null`、`queue=[]`），没中断上传。
+
+## 2026-11-03 · 状态词表：萌兽3 缺「剪辑中/待审片/审片中」时不再写表报错
+
+- 背景：逆天萌兽2 的「剪辑进度」有 `待开始/可剪辑/剪辑中/待审片/审片中/已定剪`，逆天萌兽3 只有 `待开始/可剪辑/已定剪`（导演的表没加中间三档）。写一个表里没有的选项，飞书报错，整张卡就废了——剪辑师点「开始剪辑」「精剪完成」、审片人点「查看成片」在萌兽3 上全是断的。小熊决定**不动表的选项，改机器人适配**。
+- 新增 `src/status-vocab.js`：读当前项目表的字段选项（5 分钟一刷，跟巡检走），`has(字段名, 选项名)` 告诉流程这一档能不能写。`load()` 懒加载 feishu 客户端，自检脚本没凭证也不会崩；读不到时按「全都有」处理，保持老行为。
+- 新增「影子档位」：表里没那一档就不写表，改记 `flow-state.json → trimShadow[recordId] = { stage, at }`。流程判断一律走 `effectiveTrim()`（表值 + 影子，表上已定剪则影子作废）。
+- `writeTrim(rec, stage)` 统一出口：能写就写表并清影子；写表撞到「选项不存在」类错误也兜底记影子，不让卡片报错。**「剪辑通过 → 已定剪」照常写表**，流程完整走通。
+- 卡片文案按表说实话：终审卡在萌兽3 上不再说「会把剪辑进度记成审片中」，改成「没有中间档位，不会改表」，进度行显示「可剪辑（机器人这边记到「待审片」…）」。批量卡的选项从「开始剪辑 → 剪辑中 / 精剪完成 → 待审片」改成「开始剪辑 / 精剪完成 → 通知审片人终审」。
+- `batch.js`：待办筛选和门禁改看 `r.trimEffective || r.trimStage`，萌兽3 走过「开始剪辑」后精剪完成照样放行。
+- 备份 `backups/status-vocab-20261103/`；新自测 `scripts/test-status-vocab.js`（同时模拟两种表，断言萌兽3 一次表都不写、萌兽2 行为不变）；`test-scene-flow` / `test-batch` 均通过。已重启（pid 79876）。
+
+## 2026-11-03 · 同集同制作师合并成单集1场（排期同步 + 上传匹配）
+
+- 规则：同一集在源表被拆成多段（第104集-1 / -2）时，若**每段的制作师都是同一人**，同步时合并成一条——场次=1、排期分段=`第N集`、场景取各段并集、开始取最早、预计完成取最晚。**不同制作师才保留分行**，免得一个人的任务里混进别人的场次。
+- `schedulesync.parseSource` 末尾新增 `mergeSameArtist()`；合并项带 `mergedKeys`（原始分段名），并在 warnings 里留一句「已合并为单集1场」，预览能看见。
+- `plan()` 新增 `remove`：合并时把旧的 `第104集-1/-2` 都找出来，留场次=1 那条改写成合并结果，其余进删除队列。`run()` 在写入之后调 `batchDelete` 清掉，report 记 `removed` 数，`summary()` 也提一句。
+- `task-identity.select`：**该集只有一条任务时，场次号不再作区分** —— `104.mp4`、`104-1.mp4`、`104-整集.mp4` 都命中同一条。副作用是普通单场集也能直接用 `64.mp4` 上传，不必写死 `-1`。同集多条（不同制作师）时行为不变，仍需明确场次。
+- 多维表格回写（`markEpisodeReady`）按 recordId 走，合并后自然落到留下的那一条，不用改。
+- 实测：源表 6 集分场，只有第104集（陈俊杰，夜独星房间 + 第一学院·地灵境比试台）符合合并条件；合并后该记录场次=1、排期分段=`第104集`、场景两个都在。
+- **未完成**：删除 `第104集-2` 报 `99991672`，应用缺 `base:record:delete`。开通链接：`https://open.feishu.cn/page/scope-apply?clientID=[已脱敏]&scopes=base%3Arecord%3Adelete`，开完重跑一次 `/tbpq` 即收尾。
+- 备份：代码 `backups/tbpq-merge-20261103/`，表数据 `backups/table-before-merge-20261103.json`（151 条）。
+
+## 2026-11-03 · /tbpq 不再卡源表加列 + 命令描述显示排期进度
+
+- 报错根因：`schedulesync.run` 里 `sheet.column_count !== 21` 是硬校验。源子表「第三季排期」今天从 21 列扩到 24 列（新增 V「修改」、W「剪辑预留」、X「提交」），校验直接抛「源子表结构已变化」，同步根本进不到解析。
+- 修法：列数改成区间校验（21–40），读取范围不再写死 `A1:U`，按 `sheet.column_count` 算出最后一列（现在读到 X）。
+- `specialCols` 正则补「剪辑预留」「提交」：这两列是后期节点不是拍摄日，不补的话放开列数后会被当拍摄日，把排期拉长到 11/30。
+- 新增 `refreshCommandDescription`：真同步成功后，把「项目名 · 上次同步时间 · 排到第几集」写进飞书 `/tbpq` 斜杠命令的描述（`command_id` 7701925894633311246），菜单里选指令时直接看到进度。失败只记日志，不影响同步本身。
+- 实测 `/tbpq 预览`：151 条分段 / 145 集，新建 56、更新 1、不变 94（截至此次修改还没真同步，所以目标表仍停在 91 集）。
+- 原件备份 `backups/tbpq-columns-20261103/`。
+
+## 2026-11-02 · /tbpz 采集时限放宽：增量 25 → 60 分钟
+
+- `reviewsync.collectionTimeoutMs`：全量（含无水位时的首次增量）保持 120 分钟，普通增量从 25 分钟改为 **60 分钟**。视频多的大项目不用再中途超时中断、重跑一遍。
+- 回执与文案同步：`src/index.js` 三处提示、`help.md`、`help-lite.md` 都改成「全量 120 分钟，增量 60 分钟」。
+- 回归脚本 `scripts/test-tbpz-profiles.js` 断言跟进（25 → 60），全 PASS。
+- 改动前原件备份在 `backups/tbpz-timeout-20261102/`；已重启生效（pid 60027），长连接已建立。
+
+## 2026-10-30 · 暂时停用制作师通知
+
+- `config.json` 新增 `notificationPolicy`（沿用已有统一通知策略）：`features.revision`（修改与素材通知）= `false`。一审通过/一审未通过照旧改表（审阅反馈、素材生成进展、剪辑进度），但**不再给制作师发「请上传素材」「请修改」卡**。
+- 其余通知不受影响：一审卡（审片人）、开始精剪卡与终审卡（剪辑师/审片人）、体检卡、上传回执。
+- 即时生效：`feishu.js` 每次发私聊前现读 `config.json`，改完不用重启。
+- `flow.js` 新增 `artistBlockReason()`：卡被策略挡掉时，点按钮的审片人看到的 toast 和结果卡如实写「制作师通知没发（修改与素材通知已关闭）」，不再谎报「已通知制作师」；没填制作师也走这条提示，并提示直接跟制作师说。
+- 恢复：把 `notificationPolicy.features.revision.enabled` 改回 `true`（管理台也能改），不用重启。
+- help.md 同步这段状态说明。
+
+## 2026-10-29 · 机器人可迁到新机运行：路径自适应 + deploy 迁移材料包
+
+- 动机：机器人在小熊本机驱动 Chrome 上传分秒帧，弹窗打扰 + 电脑卡。目标架构 = 本机只写代码，公司另一台 Mac 跑机器人，Syncthing 双向秒级同步代码（同 WiFi 直连，VPN 时自动走中继）。
+- **路径自适应**（两边机器都能跑同一份代码）：`start.sh` 的 Node 绝对路径改成探测式（PATH 里找 ≥22 → 退回 `~/.workbuddy/binaries/node/*/bin/node` glob，本机行为不变）；`start.sh` 里 bsk 启动路径改 `os.path.expanduser`；`src/health.js`、`src/schedulesync.js` 里写死的 `~/...` 改成 `process.env.HOME` 拼。`src/index.js` 本来就是自适应，没动。
+- 新增 `deploy/`：`README-迁移到新机.md`（完整迁移+切换日+日常 ssh 运维指南）、`migrate-first-copy.sh`（本机跑，rsync 全量到新机 + 拷 bsk 二进制）、`bootstrap.sh`（新机跑，npm install + launchd 开机自启 + 缺项检查）、`syncthing-ignore.txt`（`.stignore` 内容，ignore 全部运行态文件）。
+- 新增根目录 `restart.sh`（stop+start，配合 `ssh 新机 'bash ~/video-bot/restart.sh'` 让代码改动生效）。
+- 已知不迁移项：Chrome 分秒帧登录态和 bsk 扩展（绑本机钥匙串，新机重装重登）；/tbpz 排期同步的 lark-cli（指向本机 WorkBuddy 托管 Node 的 wrapper，新机暂缺，迁移初期 /tbpz 只影响排期同步不影响上传主链路）。
+- 切换纪律：**同一时间只能一台机器跑机器人**（两台同跑抢飞书事件丢消息），`.bot.lock` 是单机锁管不了跨机。改动同事无感知，不进发布公告、help 不改。
+
 ## 2026-10-29 · /tbpz 必须带分支，裸命令只回用法
 
 - 只发 `/tbpz` 不再直接跑增量同步，回一段用法（粗剪、精剪各能发什么）；原来的行为改名为 **`/tbpz 粗剪`**。
@@ -294,7 +416,7 @@
 - 新增 `src/drivefolder.js`：配一个共享云盘文件夹，每 5 分钟扫一次，发现新视频 → 下载到临时目录 → 传给分秒帧 → 删临时文件。按 file token 去重。
 - 命令：`/drive` 立刻扫一次；`/drive <文件夹链接>` 换文件夹（写 config.json）。
 - 缺 `space:document:retrieve` 时自动暂停扫描（只记一条日志，不每 5 分钟撞一次）；开完权限发 `/drive` 或重启即可恢复。
-- 默认文件夹设为 `[已脱敏]`（小熊给的「粗剪/收件」目录）。
+- 默认文件夹设为 `HGuFfsEGzldyNqdZ53ac9x5Ynlc`（小熊给的「粗剪/收件」目录）。
 - 顺手修：一审卡片发送失败后不再每 10 分钟重试（失败也记签名，要补发用 `/flow backfill`）。
 
 ## 2026-10-26 20:16 · 云盘文件下载（drive:file:download）
@@ -586,7 +708,16 @@
 ## 2026-10-29 · /tbpq 测试排期同步
 
 - 新增并注册 /tbpq（7701925894633311246），发布应用 v1.0.10，常驻进程在精剪批注任务结束后重载并确认长连接建立。
-- 第二季排期 aCHsjd 按颜色映射七位制作师，写入测试表 [已脱敏]；129集按分段保留为136行，人员、场景、上海时区日期逐条回读一致。
+- 第二季排期 aCHsjd 按颜色映射七位制作师，写入测试表 tblqpzt1DaBK5Hvb；129集按分段保留为136行，人员、场景、上海时区日期逐条回读一致。
 - 排除10月16日整列调整修改背景；真实合并场景和已核实场景来源入审计。第64集两段场景按用户要求留空。
 - /tbpq 预览只读；重复同步只更新变化，实测新增0、更新0、不变136；只用字段API，不调用人员通知或正式审阅流程，写前检查目标无工作流。
 - 验证：scripts/test-schedule-sync.js 通过；最终验收 logs/tbpq-final-verification.json 为PASS。
+
+## 2026-10-30 · 开机自启（launchd）+ 摘掉旧 daemon 的自启任务
+
+- 新增 LaunchAgent `com.wuxiaohe.videobot`（`~/Library/LaunchAgents/com.wuxiaohe.videobot.plist`），登录后自动拉起 video-bot；`KeepAlive = {SuccessfulExit: false}`，崩了自动拉、正常退出（让位给手动实例）不重拉。
+- 入口脚本 `05-工程/video-bot/launchd-run.sh`：补 PATH / 清代理 / 清 NODE_OPTIONS / 找 Node≥22 / 确保 bsk 在跑，最后 `exec node src/index.js`（exec 不换 pid，launchd 才托管得到）。软链 `~/video-bot` → video-bot，让 plist 只引用纯英文路径。
+- `start.sh`：检测到已装自启就 `launchctl bootstrap` 托管，失败回退手动启动。`stop.sh`：先 `bootout` 再杀进程（否则 KeepAlive 立刻拉回）。`restart.sh`：已加载时走 `launchctl kickstart -k`。`status.sh` 增「开机自启」状态行。
+- **摘掉旧任务 `com.wuxiaohe.upmedia`**：它自 2026-10-23 起每次登录都在跑旧的 `video-to-mediatrack/daemon.js`，本次实测 pid 731 已存活 7 天且处于「自动上传模式」。已 bootout，plist 归档到 `06-运维/archived-launchagents/`。
+- 顺带修正：`status.sh` 判旧 daemon 存活改用 `pgrep -f video-to-mediatrack/daemon.js`（原 `daemon.pid` 是陈旧值 78625，一直在骗人）；`bot.pid` 对齐实际在跑实例。
+- 说明文档：`06-运维/开机自启.md`（含 `launchctl bootstrap` 在本机会话必定 error 5 的结论）。

@@ -37,7 +37,13 @@ const { spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const LOG_FILE = path.join(ROOT, 'logs', 'bot.log');
 const EPISODE = '999';
-const PROJECT = '《逆天萌兽2》';
+// 测哪张表：跟着巡检目标走（config.flow.projects 第一个），没配就按《逆天萌兽3》。
+// 2026-11-05 改：巡检只扫第三季，999 记录还留在第二季表里 → 机器人永远翻不到它，
+// 「自动置进行中」「待一审卡片」两步必挂。整条自检现在都在目标项目上下文里跑。
+const CONF = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+const TARGET_KEY = (CONF.flow && Array.isArray(CONF.flow.projects) && CONF.flow.projects[0]) || 'nts3';
+const TARGET_NAME = ((CONF.sceneProjects || []).find((p) => p.key === TARGET_KEY) || {}).name || '《逆天萌兽3》';
+const PROJECT = TARGET_NAME;
 const ME_NAME = '陈俊杰';
 const FALLBACK_ME_ID = '[已脱敏]';
 
@@ -58,7 +64,8 @@ console.log = (...a) => {
 
 const flow = require(path.join(ROOT, 'src', 'flow'));
 const bitable = require(path.join(ROOT, 'src', 'bitable'));
-const { sendTextTo } = require(path.join(ROOT, 'src', 'feishu'));
+const PC = require(path.join(ROOT, 'src', 'project-context'));
+const { sendTextTo, getClient, withTimeout } = require(path.join(ROOT, 'src', 'feishu'));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -107,6 +114,21 @@ async function waitLog(pattern, opts) {
   }
 }
 
+/** 读记录带重试：飞书单条读现在能拖到 20 多秒，flow.getRecord 的 10 秒超时不够用 */
+async function readRecord(id) {
+  const cfg = require(path.join(ROOT, 'src', 'config'));
+  let last;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await withTimeout(getClient().bitable.v1.appTableRecord.get({
+        path: { app_token: cfg.BASE.appToken, table_id: cfg.BASE.tableId, record_id: id },
+      }), 45000, '读记录');
+      return flow.mapRecord((res.data || res).record);
+    } catch (e) { last = e; await sleep(2000); }
+  }
+  throw last;
+}
+
 // ---------------------------------------------------------------- 结果记录
 const steps = [];
 function step(name, ok, detail) {
@@ -144,7 +166,7 @@ async function ensureBot() {
 }
 
 // ---------------------------------------------------------------- 主流程
-(async () => {
+async function main() {
   const t0 = Date.now();
   const startedAt = new Date();
   const report = {
@@ -184,7 +206,9 @@ async function ensureBot() {
   step('机器人在跑', !!bot.pid, bot.pid ? `pid ${bot.pid}${bot.started ? '（本次拉起）' : ''}` : '没有进程，start.sh 也没起来');
 
   // 2. 找 999 记录（没有就新建一条）+ 陈俊杰的 open_id
-  const recs = await flow.fetchAllRecords();
+  // 只查巡检目标项目的表：以前用 fetchAllRecords 会把第二季那张表也翻出来，
+  // 撞上第二季的 999 记录后整条自检都在改一张巡检根本不看的表（2026-11-04/05 连续挂在这儿）。
+  const recs = (await flow.activeRecords()).filter((r) => !r.projectKey || r.projectKey === TARGET_KEY);
   const findMe = (list) => (list || []).find((p) => (p.name || '').includes(ME_NAME) || p.id === FALLBACK_ME_ID);
   let me = null;
   for (const r of recs) {
@@ -201,6 +225,7 @@ async function ensureBot() {
     try {
       const created = await bitable.createRecord({
         集数: Number(EPISODE),
+        场次: 1,
         '《项目名》': PROJECT,
         审片人: [{ id: me.id }],
         制作师: [{ id: me.id }],
@@ -239,12 +264,15 @@ async function ensureBot() {
   patch['实际完成日期'] = null;
   report.resetFields = Object.keys(patch);
 
+  // 打点要在改表之前：巡检 10 秒一轮，改完再打点会漏掉「①自动化」那一行（2026-11-03 踩过）
+  const markAuto = sizeOf(LOG_FILE);
   await flow.updateFields(rec.recordId, patch);
 
-  let cur = await flow.getRecord(rec.recordId);
+  let cur = await readRecord(rec.recordId);
+  // 巡检可能已经抢先把 待开始 翻成 进行中/生成中，这算正常，不算重置失败
   const resetOk =
-    cur.progress === '待开始' &&
-    cur.stage === '待开始' &&
+    ['待开始', '进行中'].includes(cur.progress) &&
+    ['待开始', '生成中'].includes(cur.stage) &&
     cur.review === '未审阅' &&
     cur.trimStage === '待开始' &&
     cur.artist.length === 1 && cur.artist[0].id === me.id &&
@@ -255,20 +283,21 @@ async function ensureBot() {
     `${report.rolesChanged ? ' · 角色已改为陈俊杰' : ' · 角色本来就是陈俊杰'}`);
 
   // 4. 等机器人自动：进展 → 进行中、素材生成进展 → 生成中
-  const markAuto = sizeOf(LOG_FILE);
-  const w1 = await waitLog(new RegExp(`①自动化：${EPISODE} 集已过开始日期`), { from: markAuto, timeoutMs: 200000 });
+  // 以表状态为准轮询（日志只是佐证）：巡检 10 秒一轮，日志可能正好落在打点之前。
+  const autoT0 = Date.now();
   let auto = null;
-  if (w1.ok) {
-    for (let i = 0; i < 12; i++) {
-      auto = await flow.getRecord(rec.recordId);
-      if (auto.progress === '进行中' && auto.stage === '生成中') break;
-      await sleep(3000);
-    }
+  for (let i = 0; i < 40; i++) {
+    auto = await readRecord(rec.recordId);
+    if (auto.progress === '进行中' && auto.stage === '生成中') break;
+    await sleep(5000);
   }
+  const autoWaited = Math.round((Date.now() - autoT0) / 1000);
   const autoOk = !!(auto && auto.progress === '进行中' && auto.stage === '生成中');
-  report.autoStart = auto ? { progress: auto.progress, stage: auto.stage, waitedSec: Math.round(w1.waited / 1000) } : null;
+  const w1log = readFrom(LOG_FILE, markAuto);
+  report.autoStart = auto ? { progress: auto.progress, stage: auto.stage, waitedSec: autoWaited,
+    logged: new RegExp(`①自动化：${EPISODE} 集已过开始日期`).test(w1log) } : null;
   step('机器人自动置「进展=进行中 / 素材生成进展=生成中」', autoOk,
-    auto ? `进展=${auto.progress} 素材=${auto.stage}（等了 ${Math.round(w1.waited / 1000)} 秒）` : '等 200 秒没有巡检日志');
+    auto ? `进展=${auto.progress} 素材=${auto.stage}（等了 ${autoWaited} 秒）` : `等 ${autoWaited} 秒表里还是没变成进行中/生成中`);
 
   // 5. 待一审 → 等机器人发一审卡片
   const markReview = sizeOf(LOG_FILE);
@@ -280,6 +309,7 @@ async function ensureBot() {
   const actBuf = () => buf.length;
   async function act(a, name, expect, cardPattern) {
     const from = actBuf();
+    const markFile = sizeOf(LOG_FILE);
     let res = null;
     try {
       res = await flow.handleCardAction({ a, r: rec.recordId }, me.id, null);
@@ -287,14 +317,30 @@ async function ensureBot() {
       step(name, false, `按钮回调抛错：${(e && e.message) || e}`);
       return false;
     }
-    const got = cardPattern
-      ? await waitLog(cardPattern, { source: 'buf', from, timeoutMs: 20000 })
-      : { ok: true };
-    const now = await flow.getRecord(rec.recordId);
+    // 卡片可能由本进程发，也可能被巡检代发：buf 和 bot.log 都看，哪边有都算
+    let got = { ok: !cardPattern };
+    if (cardPattern) {
+      got = await waitLog(cardPattern, { source: 'buf', from, timeoutMs: 20000 });
+      if (!got.ok) got = await waitLog(cardPattern, { from: markFile, timeoutMs: 20000 });
+      // 同一张卡 5 分钟内发过时巡检会按去重跳过（trimAt 冷却），这也是正常结果 —— 连跑两次自检时会撞上
+      if (!got.ok) {
+        const dedupe = new RegExp(`${EPISODE} 集[^\\n]*(5 分钟内发过了|已经?发过)`).test(readFrom(LOG_FILE, markFile));
+        if (dedupe) got = { ok: true, dedupe: true };
+      }
+    }
+    // 表状态可能滞后：读回不一致时再复查两轮
     const pairs = Object.entries(expect || {});
+    let now = await readRecord(rec.recordId);
+    for (let i = 0; i < 2; i++) {
+      const bad = pairs.filter(([k, v]) => String(now[k] == null ? '' : now[k]).trim() !== String(v));
+      if (!bad.length) break;
+      await sleep(4000);
+      now = await readRecord(rec.recordId);
+    }
     const bad = pairs.filter(([k, v]) => String(now[k] == null ? '' : now[k]).trim() !== String(v));
     const detail = pairs.map(([k, v]) => `${k}=${now[k]}`).join(' ') +
-      (cardPattern ? (got.ok ? ' · 卡片已发' : ' · 卡片没发') : '');
+      (cardPattern ? (got.ok ? (got.dedupe ? ' · 卡片 5 分钟内已发过（去重生效）' : ' · 卡片已发') : ' · 卡片没发') : '') +
+      (res && res.toast && res.toast.content ? ` · ${res.toast.content}` : '');
     const toastOk = !res || !res.toast || res.toast.type !== 'error';
     return step(name, got.ok && bad.length === 0 && toastOk, detail);
   }
@@ -304,21 +350,29 @@ async function ensureBot() {
     new RegExp(`卡片「请修改 ${EPISODE}」已发 \\d+/\\d+ 人`));
   await act('reupload', '修改已上传 → 回到待一审并重发卡', { stage: '已粗剪待一审' },
     new RegExp(`卡片「一审 ${EPISODE}」已发 \\d+/\\d+ 人`));
-  await act('review_pass', '一审通过 → 请上传卡片 + 剪辑进度=可剪辑', { review: '通过', trimStage: '可剪辑' },
+  await act('review_pass', '一审通过 → 请上传卡片 + 剪辑进度=可剪辑', { review: '通过', trimEffective: '可剪辑' },
     new RegExp(`卡片「请上传素材 ${EPISODE}」已发 \\d+/\\d+ 人`));
   await act('uploaded', '素材已上传 → 开始精剪卡片', { stage: '已完成并上传' },
     new RegExp(`卡片「开始精剪 ${EPISODE}」已发 \\d+/\\d+ 人`));
-  await act('trim_start', '开始剪辑 → 剪辑进度=剪辑中', { trimStage: '剪辑中' }, null);
-  await act('trim_done', '精剪完成 → 剪辑进度=待审片 + 终审卡片', { trimStage: '待审片' },
+  // 第三季表的「剪辑进度」没有 剪辑中/待审片/审片中 三档，这三步只看有效值（trimEffective）
+  await act('trim_start', '开始剪辑 → 剪辑进度=剪辑中', { trimEffective: '剪辑中' }, null);
+  await act('trim_done', '精剪完成 → 剪辑进度=待审片 + 终审卡片', { trimEffective: '待审片' },
     new RegExp(`卡片「剪辑终审 ${EPISODE}」已发 \\d+/\\d+ 人`));
-  await act('final_view', '查看成片 → 剪辑进度=审片中', { trimStage: '审片中' }, null);
+  await act('final_view', '查看成片 → 剪辑进度=审片中', { trimEffective: '审片中' }, null);
   await act('final_pass', '剪辑通过 → 已定剪 + 进展已完成',
-    { review: '通过', trimStage: '已定剪', progress: '已完成' }, null);
+    { review: '通过', trimEffective: '已定剪', progress: '已完成' }, null);
 
   report.steps = steps;
   report.ok = steps.every((s) => s.ok);
   report.durationSec = Math.round((Date.now() - t0) / 1000);
   await finish(report);
+}
+
+(async () => {
+  if (!PC.projects().some((p) => p.key === TARGET_KEY)) throw new Error('巡检目标项目未配置：' + TARGET_KEY);
+  origLog('自检目标：' + TARGET_NAME + '（' + TARGET_KEY + '）');
+  // 整个流程都在目标项目上下文里跑：bitable / flow 读写都会落到这张表
+  await PC.run(TARGET_KEY, main);
 })().catch(async (e) => {
   origLog('自检脚本异常：' + ((e && e.stack) || e));
   steps.push({ name: '脚本异常', ok: false, detail: String((e && e.message) || e) });

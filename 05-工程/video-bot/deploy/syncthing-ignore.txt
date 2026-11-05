@@ -1,0 +1,16 @@
+node_modules
+.workbuddy
+.DS_Store
+logs
+downloads
+inbox
+backups
+review-preview
+bot.pid
+.bot.lock
+.queue.json
+admin-runtime.json
+state.json
+flow-state.json
+drive-state.json
+tbpz-sync-log.jsonl

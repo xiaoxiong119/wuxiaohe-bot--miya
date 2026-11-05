@@ -34,3 +34,46 @@ assert.equal(missing.items[1].fields['场景'], undefined);
 assert.throws(() => date('2月30日', 2026), /无效排期日期/);
 assert.throws(() => date('未知', 2026), /无法确定日期/);
 console.log('PASS：颜色、特殊日排除、分段、真实合并场景、上海日期、重复同步、最小更新与异常拦截');
+const { missingOptions, ensureOptions } = require('../src/schedulesync');
+const optionFields = [{ field_id: 'f', field_name: '场景', type: 4, property: { options: [{ id: 'o', name: '庭院', color: 2 }] } }, { field_name: '状态', type: 3, property: { options: [] } }];
+const optionItems = [{ fields: { 场景: ['庭院', '新场景', '新场景'], 状态: '待开始' } }];
+assert.deepEqual(missingOptions(optionItems, optionFields).map(e => e.names), [['新场景'], ['待开始']]);
+(async () => {
+  let current = JSON.parse(JSON.stringify(optionFields)), writes = 0;
+  const client = { bitable: { v1: { appTableField: {
+    list: async () => ({ code: 0, data: { items: current } }),
+    update: async ({path, data}) => { writes++; const field = current.find(f => f.field_id === path.field_id); Object.assign(field, data); return { code: 0 }; },
+  } } } };
+  // Single selectable field: preserve its old ID and color; second run adds nothing.
+  await ensureOptions(client, {}, [{fields:{场景:['新场景']}}]);
+  assert.deepEqual(current[0].property.options[0], {id:'o',name:'庭院',color:2});
+  await ensureOptions(client, {}, [{fields:{场景:['新场景']}}]);
+  assert.equal(writes, 1);
+  console.log('PASS：选项去重、单选/多选、保留已有选项、回读与重复执行');
+})().catch(e => { console.error(e); process.exitCode = 1; });
+
+const legacy = result.items.map((item, n) => ({record_id:'legacy'+n, fields:{集数:String(item.fields['集数']),场次:String(item.fields['场次'])}}));
+assert.equal(plan(result.items, legacy).create.length, 0);
+assert.equal(plan(result.items, legacy).update.length, 2);
+assert.throws(() => plan(result.items, [...legacy, legacy[0]]), /集数与场次重复/);
+assert.deepEqual(result.items.map(i => i.fields['场次']), [1,2]);
+console.log('PASS：集数与场次安全匹配、重复拦截、分段场次');
+
+const defaultPlan = plan(result.items, result.items.map((item,n)=>({record_id:'d'+n,fields:{...item.fields,进展:n?'已完成':''}})), {进展:'待开始'});
+assert.deepEqual(defaultPlan.update, [{record_id:'d0',fields:{进展:'待开始'}}]);
+assert.equal(defaultPlan.unchanged,1);
+assert.equal(plan(result.items, [], {进展:'待开始'}).create[0].fields.进展,'待开始');
+console.log('PASS：旧记录只补空白默认值、保留已有状态、新增携带默认值');
+
+const points = require('../src/points-sync');
+const pointsItems = [{fields:{集数:9,场次:1}}, {fields:{集数:9,场次:2}}, {fields:{集数:10,场次:1}}];
+const existingPoints = [{fields:{集数:'9',场次:1,单集制作积分:50,'《项目名》':'既有项目'}}];
+const pointsPlan = points.plan(pointsItems, existingPoints, '《逆天萌兽3》');
+assert.deepEqual(pointsPlan.create, [
+  {fields:{集数:9,场次:2,'《项目名》':'《逆天萌兽3》'}},
+  {fields:{集数:10,场次:1,'《项目名》':'《逆天萌兽3》'}},
+]);
+assert.equal(pointsPlan.unchanged, 1);
+assert.equal(points.plan(pointsItems, [...existingPoints, ...pointsPlan.create], '《逆天萌兽3》').create.length, 0);
+assert.throws(() => points.plan(pointsItems, [existingPoints[0], existingPoints[0]]), /重复/);
+console.log('PASS：积分按集数场次补齐、第三季名称、保留已有积分和重复执行');

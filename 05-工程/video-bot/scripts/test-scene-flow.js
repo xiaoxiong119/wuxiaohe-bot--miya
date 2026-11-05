@@ -1,0 +1,25 @@
+'use strict';
+const assert = require('node:assert/strict'), fs = require('fs'), path = require('path'), vm = require('vm');
+const root = path.join(__dirname,'..'), PC = require('../src/project-context');
+const projects = PC.projects(); assert(projects.some(p=>p.key==='nts3'));
+const t2=projects.find(p=>p.key==='legacy').base.tableId,t3=projects.find(p=>p.key==='nts3').base.tableId;
+const make=(id,scene)=>({record_id:id,fields:{集数:64,...(scene?{场次:scene}:{}),素材生成进展:'已粗剪待一审',审阅反馈:'未审阅',剪辑进度:'待开始',制作师:[{id:'artist',name:'测试制作师'}],审片人:[{id:'reviewer',name:'测试审片人'}],剪辑师:[{id:'editor',name:'测试剪辑师'}]}});
+const tables={[t2]:[make('legacy64')],[t3]:[make('scene1',1),make('scene2',2)]},writes=[];
+const records={search:async({path:p})=>({data:{items:tables[p.table_id],has_more:false}}),get:async({path:p})=>({data:{record:tables[p.table_id].find(r=>r.record_id===p.record_id)}}),update:async({path:p,data})=>{const row=tables[p.table_id].find(r=>r.record_id===p.record_id);assert(row);writes.push({table:p.table_id,id:p.record_id,fields:data.fields});Object.assign(row.fields,data.fields);return {code:0};}};
+const realRequire=require('module').createRequire(path.join(root,'src/flow.js'));
+const mod={exports:{}};
+vm.runInNewContext(fs.readFileSync(path.join(root,'src/flow.js'),'utf8'),{module:mod,exports:mod.exports,process:{env:{FLOW_STATE_READONLY:'1'}},setTimeout,clearTimeout,setInterval,clearInterval,require:n=>{
+ if(n==='fs')return{readFileSync:p=>{if(String(p).endsWith('config.json'))return '{}';throw Error('no state');}};
+ if(n==='./config')return{ROOT:root,BASE:PC.base,FLOW:{enabled:true,tickMinutes:1}};
+ if(n==='./feishu')return{getClient:()=>({bitable:{v1:{appTableRecord:records}},im:{v1:{message:{create:async()=>({code:0})}}}}),withTimeout:p=>p,sendTextTo:async()=>{}};
+ if(n==='./log')return{log:()=>{}};
+ return realRequire(n);
+}});
+(async()=>{const f=mod.exports;const rows=await f.fetchAllRecords();assert.equal(rows.length,3);assert.equal(rows.find(r=>r.recordId==='scene1').project,'《逆天萌兽3》');
+ const result=await f.handleCardAction({a:'review_pass',r:'scene1'},'reviewer','');assert.equal(result.toast.type,'success');
+ assert.equal(tables[t3][0].fields.审阅反馈,'通过');assert.equal(tables[t3][1].fields.审阅反馈,'未审阅');assert.equal(tables[t2][0].fields.审阅反馈,'未审阅');
+ const scene2=await f.getRecord('scene2');
+ const fail=await f.handleCardAction({a:'review_fail',r:'scene2',batch:{kind:'review',signature:require('../src/batch').signature(scene2),note:'第二场声音过低'}},'reviewer','');
+ assert.equal(fail.toast.type,'success');assert.equal(tables[t3][1].fields.修改位置,'第二场声音过低');assert.equal(tables[t3][1].fields.素材生成进展,'修改中');assert.equal(tables[t3][0].fields.审阅反馈,'通过');assert(writes.every(w=>w.table===t3));
+ console.log('PASS: 实际flow逻辑模拟64-1通过、64-2退改及意见回写互不覆盖；萌兽2同集不受影响');
+})().catch(e=>{console.error(e);process.exitCode=1;});

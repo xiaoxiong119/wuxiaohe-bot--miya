@@ -9,10 +9,10 @@ set -e
 cd "$(dirname "$0")"
 mkdir -p logs
 
-export PATH="/Users/fanxiaoli/.local/bin:/Users/fanxiaoli/.workbuddy/binaries/node/versions/20.18.0/bin:/Users/fanxiaoli/.workbuddy/binaries/node/versions/22.22.2-6/bin:$PATH"
+export PATH="~/.local/bin:~/.workbuddy/binaries/node/versions/20.18.0/bin:~/.workbuddy/binaries/node/versions/22.22.2-6/bin:$PATH"
 export BSK_AUTO_START=0
 
-NODE=/Users/fanxiaoli/.workbuddy/binaries/node/versions/22.22.2-6/bin/node
+NODE=~/.workbuddy/binaries/node/versions/22.22.2-6/bin/node
 BASE="$(pwd)"
 
 # 1. bsk 浏览器服务
@@ -25,7 +25,7 @@ import subprocess, os, sys
 base = sys.argv[1]
 log = open(os.path.join(base, 'logs/bsk.log'), 'a')
 subprocess.Popen(
-    ['/Users/fanxiaoli/.local/bin/bsk', 'daemon', 'start', '--foreground'],
+    ['~/.local/bin/bsk', 'daemon', 'start', '--foreground'],
     cwd=base, stdout=log, stderr=subprocess.STDOUT,
     start_new_session=True, env=dict(os.environ),
 )

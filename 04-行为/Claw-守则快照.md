@@ -15,7 +15,7 @@ _快照时间：2026-10-26 13:37_
 
 ## 工作日志（2026-09-15 起）
 - 小熊每周一到周五会口述当天工作，要求自动记录。
-- 日志文件：`/Users/fanxiaoli/WorkBuddy/Claw/工作日志/YYYY-Www.md`（ISO 周数），格式约定见同目录 `README.md`。
+- 日志文件：`~/WorkBuddy/Claw/工作日志/YYYY-Www.md`（ISO 周数），格式约定见同目录 `README.md`。
 - 收到当天工作汇报 → 直接追加进本周日志，不用确认。
 - 每周五晚上自动生成周报统计表（列：参与项目 / 项目管理 / 资产已确认 / 资产修改中 / 视频已交付 / 视频修改中 / 延期交付 / 基建工作），已设自动化。
 - 集数口径：统一写作「第 X 集」（不写 ep4 这类混用写法）。**集制作完成后，后续的修改仍计入「视频（已交付）」**，不单列到「修改中」；只有尚未完成成片的才归「视频（修改中）」。
@@ -30,7 +30,7 @@ _快照时间：2026-10-26 13:37_
 - 已注册斜杠命令：`/doc` 读文档、`/table` 查表格、`/kpi` 填月度KPI、`/weekly` 写周报。
 
 ## 乌小河插件工程（2026-10-22 起）
-- 乌小河这个应用下挂了一个多维表格自动化插件（发飞书消息），工程在 `/Users/fanxiaoli/WorkBuddy/乌小河机器人/05-工程/base-notify/`。
+- 乌小河这个应用下挂了一个多维表格自动化插件（发飞书消息），工程在 `~/WorkBuddy/乌小河机器人/05-工程/base-notify/`。
 - 改它之前先读同目录 `README.md`，登录/编译/上传/后台全流程和踩坑清单都在里面。
 - 核心三步：`cd action-starter && ./node_modules/.bin/block-basekit-cli build` → `node upload.js <递增版本号> "<说明>"` → 后台选版本填信息保存。
 - 命令都要加 `env -u NODE_OPTIONS`；上传路径是 `action-starter/output`；登录环境 id 是小写 `feishu`。
@@ -38,6 +38,6 @@ _快照时间：2026-10-26 13:37_
 ## 视频转存分秒帧（2026-10-23 起）
 - **这件事不归你管。** 有常驻进程 `daemon.js` 自动处理：收到视频就下载上传，并自己发结果（带 ✅ 的那条）。你在飞书里看到的视频消息，不需要你回应、也不需要你处理。
 - **收到纯视频/文件消息时，不要说话。** 你没有本地工具，说出来的"文件没落地""缺读取权限""你传到云文档我来拉"全是错的，会让小熊以为失败。
-- 只有小熊明确问「为什么没传上」时，才去读日志：`tail -30 /Users/fanxiaoli/WorkBuddy/乌小河机器人/05-工程/video-to-mediatrack/logs/daemon.log`，照原文回答，别自己编原因。
-- 若日志显示 daemon 没在跑，让他开终端执行 `cd /Users/fanxiaoli/WorkBuddy/乌小河机器人/05-工程/video-to-mediatrack && ./start.sh`。
+- 只有小熊明确问「为什么没传上」时，才去读日志：`tail -30 ~/WorkBuddy/乌小河机器人/05-工程/video-to-mediatrack/logs/daemon.log`，照原文回答，别自己编原因。
+- 若日志显示 daemon 没在跑，让他开终端执行 `cd ~/WorkBuddy/乌小河机器人/05-工程/video-to-mediatrack && ./start.sh`。
 - 2026-10-23 晚踩坑：bsk 残留 socket（`~/.bsk/run/daemon.sock`）导致浏览器会话起不来；daemon 若在沙箱里启动会静默空转（日志刷「初始化：已有 0 条视频」）。本会话 Bash 禁止删除/重命名文件，修不了，必须让用户在终端处理：`rm ~/.bsk/run/daemon.sock` 后 `./start.sh`。

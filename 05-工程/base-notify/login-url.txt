@@ -1,0 +1,1 @@
+https://passport.feishu.cn/accounts/page/login?app_id=7&redirect_uri=https%3A%2F%2Fopen.feishu.cn%2Fminiprogram%2Fapi%2Fv4%2Fpassport%2Foauth%2Fcallback%2F%3Ftoken%3DKJHqeWwwQpKhOvhYO%2BZ8DA%26redirect%3Dhttp%253A%252F%252Flocalhost%253A56624%252Fsucceed&lang=zh-CN

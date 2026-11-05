@@ -9,6 +9,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tbpz-profiles-'));
 const sourceRoot = path.join(__dirname, '..');
 const configFile = path.join(root, 'config.json');
 const initial = JSON.parse(fs.readFileSync(path.join(sourceRoot, 'config.json')));
+initial.reviewSyncFineCut.lastSyncAt = 0;
 fs.writeFileSync(configFile, JSON.stringify(initial));
 let collectorCode = 0;
 let holdCollector = false;
@@ -25,10 +26,14 @@ const mockClient = { bitable: { v1: { appTableRecord: {
     calls.push({op: 'search', ...target});
     return {data: {items: existingRecords, has_more: false}};
   },
+  update: async ({path: target, data}) => {
+    const record = existingRecords.find(r => r.record_id === target.record_id);
+    assert.ok(record); Object.assign(record.fields, data.fields); return {code:0};
+  },
   create: async ({path: target, data}) => {
     calls.push({op: 'create', ...target, fields: data.fields});
     if (failWrite) throw new Error('模拟写入失败');
-    if (recordWrites) existingRecords.push({fields: data.fields});
+    if (recordWrites) existingRecords.push({record_id: 'mock-' + existingRecords.length, fields: data.fields});
     abortOnCreate?.abort();
     return {code: 0};
   },
@@ -51,6 +56,7 @@ const context = {
       else setImmediate(() => child.emit('close', collectorCode));
       return child;
     }};
+    if (name.startsWith('./')) return require(path.join(sourceRoot, 'src', name));
     return require(name);
   },
 };
@@ -59,7 +65,7 @@ const sync = mod.exports;
 async function main() {
   assert.equal(sync.collectionTimeoutMs(true, 123), 120 * 60000);
   assert.equal(sync.collectionTimeoutMs(false, 0), 120 * 60000);
-  assert.equal(sync.collectionTimeoutMs(false, 123), 25 * 60000);
+  assert.equal(sync.collectionTimeoutMs(false, 123), 60 * 60000);
   assert.equal(sync.parseCommand('精剪 全量 预览').profile, 'fineCut');
   assert.equal(sync.parseCommand('精剪 全量 预览').arg, '全量 预览');
   assert.equal(sync.parseCommand('全量').profile, 'default');
@@ -68,13 +74,16 @@ async function main() {
   const defaultBefore = JSON.stringify(sync.readConfig());
   await sync.run({profile: 'fineCut', dryRun: true});
   assert.equal(spawns.at(-1)[1], initial.reviewSyncFineCut.mediatrackUrl);
-  assert.equal(spawns.at(-1)[4], '0');
-  assert.equal(calls.at(-1).table_id, '[已脱敏]');
+  assert.ok(Number(spawns.at(-1)[4]) > 0);
+  assert.equal(calls.at(-1).table_id, 'tbl4vFgW19bZgl41');
   assert.equal(calls.filter(c => c.op === 'create').length, 0);
   assert.equal(sync.readConfig('fineCut').lastSyncAt, 0);
+  const bootstrapSince = Number(spawns.at(-1)[4]);
+  assert.ok(Math.abs(Date.now() - bootstrapSince - 86400000) < 5000);
   const written = await sync.run({profile: 'fineCut'});
+  assert.equal(Number(spawns.at(-1)[4]), bootstrapSince, '首次增量起点应在重试间固定');
   assert.equal(written.written, 1);
-  assert.equal(calls.at(-1).table_id, '[已脱敏]');
+  assert.equal(calls.at(-1).table_id, 'tbl4vFgW19bZgl41');
   assert.ok(sync.readConfig('fineCut').lastSyncAt > 0);
   assert.equal(JSON.stringify(sync.readConfig()), defaultBefore);
   const watermark = sync.readConfig('fineCut').lastSyncAt;
@@ -93,7 +102,7 @@ async function main() {
   assert.equal(calls.at(-1).table_id, initial.reviewSync.tableId);
   assert.equal(JSON.stringify(sync.readConfig()), defaultBefore);
   const ledger = fs.readFileSync(path.join(root, 'tbpz-sync-log.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-  assert.ok(ledger.every(e => e.profile === 'fineCut' && e.tableId === '[已脱敏]'));
+  assert.ok(ledger.every(e => e.profile === 'fineCut' && e.tableId === 'tbl4vFgW19bZgl41'));
 
   // 缓存写入应零采集，复用结构化日期，重复调用通过查表去重。
   const cacheFile = path.join(root, 'review-preview/fineCut.json');
@@ -182,6 +191,9 @@ async function main() {
     ['/tbpz 粗剪 全量', 'default', false, true],
     ['/tbpz 粗剪 全量 预览', 'default', true, true],
     ['/tbpz 精剪', 'fineCut', false, false],
+    ['/tbpz 精剪 增量', 'fineCut', false, false],
+    ['/tbpz 精剪 增量 预览', 'fineCut', true, false],
+    ['/tbpz 粗剪 增量', 'default', false, false],
     ['/tbpz 精剪 预览', 'fineCut', true, false],
     ['/tbpz 精剪 全量 预览', 'fineCut', true, true],
     ['/tbpz 全量', 'default', false, true],
@@ -225,6 +237,34 @@ async function main() {
   assert.match(conf.sent[0], /\/tbpz 粗剪 全量/);
   const confFine = await dispatch('/tbpz 精剪 配置');
   assert.match(confFine.sent[0], /精剪批注同步配置/);
+
+  // 萌兽3：两场相同时间、相同意见都保留；重试不重复写。
+  sync.writeConfig({mediatrackUrl:'https://app.mediatrack.cn/projects/999/files?path=1',sceneMode:true,lastSyncAt:0},'nts3');
+  assert.equal(sync.parseCommand('逆天萌兽3 粗剪 预览').profile,'nts3');
+  assert.equal(sync.parseCommand('逆天萌兽3 精剪 预览').profile,'nts3FineCut');
+  const sceneFile=path.join(root,'scene-comments.jsonl');
+  fs.writeFileSync(sceneFile,[1,2].map(scene=>JSON.stringify({file:`64-${scene}.mp4`,versionId:'v1',body:'筛选\n审阅人\n00:21\n调整镜头衔接\n今天 10:00'})).join('\n'));
+  const parsedScenes=sync.cacheCollectedPreview({profile:'nts3',collectedFile:sceneFile,runStart:Date.now(),full:true,sinceMs:0,complete:true});
+  assert.equal(parsedScenes.rows.length,2);
+  existingRecords=[];recordWrites=true;
+  const firstScenes=await sync.run({profile:'nts3',writeCached:true});
+  assert.equal(firstScenes.written,2);
+  assert.equal(existingRecords.length,1,'同集两场意见必须汇总在一行');
+  existingRecords[0].fields['制作师备注']='人工备注保留';
+  assert(existingRecords.some(r=>r.fields['需求简述'].includes('64-1')));
+  assert(existingRecords.some(r=>r.fields['需求简述'].includes('64-2')));
+  const retryScenes=await sync.run({profile:'nts3',writeCached:true});
+  assert.equal(retryScenes.written,0);
+  fs.writeFileSync(sceneFile,JSON.stringify({file:'64-2.mp4',versionId:'v2',body:'筛选\n审阅人\n00:22\n第二次修改意见\n今天 10:00'}));
+  sync.cacheCollectedPreview({profile:'nts3',collectedFile:sceneFile,runStart:Date.now(),full:true,sinceMs:0,complete:true});
+  const updatedScenes=await sync.run({profile:'nts3',writeCached:true});
+  assert.equal(updatedScenes.written,1);
+  assert.equal(existingRecords.length,1);
+  assert.equal(existingRecords[0].fields['制作师备注'],'人工备注保留');
+  assert(existingRecords[0].fields['需求简述'].includes('第二次修改意见'));
+  assert(existingRecords[0].fields['需求简述'].includes('64-1'));
+  assert.equal((await sync.run({profile:'nts3',writeCached:true})).written,0);
+  console.log('PASS：萌兽3粗剪精剪独立路由、跨场同时间同意见保留、缓存写入及重试去重');
 
   console.log('PASS：全量和首次采集120分钟、采集中断保存缓存、写入中断停止后续行、中断路由及会话隔离；缓存写入零采集、重试去重、日期保留、缺缓存/变更目标拦截、不完整缓存水位保留；命令路由（粗剪/精剪/裸命令只回用法）、独立目标/水位、预览不写、全量、失败保留水位、默认分支及台账隔离');
 }
