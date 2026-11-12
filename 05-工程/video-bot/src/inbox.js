@@ -7,13 +7,15 @@
  * 规则：
  *   - 文件名就是分秒帧里的名字（67.mp4 → 67.mp4）
  *   - 想改名又不想改文件名：同目录放一个同名 .txt，内容写目标名字
- *   - 传完移到 inbox/done/；失败留在原地并回执
+ *   - 传完移到 inbox/done/；失败移到 inbox/failed/ 并回执
  */
 const fs = require('fs');
 const path = require('path');
 const cfg = require('./config');
 const { log } = require('./log');
 const { stripRev } = require('./epname');
+const { safeName } = require('./feishu');
+const { randomUUID } = require('crypto');
 
 const INBOX = cfg.INBOX_DIR;
 const DONE = path.join(INBOX, 'done');
@@ -64,6 +66,7 @@ function scan() {
     if (!isVideo(ent.name)) continue;
 
     const full = path.join(INBOX, ent.name);
+    if (require('./pending-uploads').createStore(cfg.ROOT).blocks({localPath:full})) continue;
     let st;
     try {
       st = fs.statSync(full);
@@ -81,7 +84,7 @@ function scan() {
       try {
         const t = fs.readFileSync(sidecar, 'utf8').trim();
         if (t) {
-          outName = path.extname(t) ? t : `${t}${path.extname(ent.name)}`;
+          outName = safeName(path.extname(t) ? t : `${t}${path.extname(ent.name)}`);
           named = true;
         }
       } catch (e) {
@@ -112,21 +115,28 @@ function scan() {
       }
     }
 
-    out.push({ path: localPath, fileName: ent.name, outName, size: st.size });
+    out.push({ path: localPath, fileName: ent.name, outName, size: st.size, sidecar: fs.existsSync(sidecar) ? sidecar : null });
   }
   return out;
 }
 
 /** 传完挪进 done/，避免重复上传 */
+function moveItem(item, dir) {
+  let name = path.basename(item.path);
+  if (fs.existsSync(path.join(dir, name))) {
+    const ext = path.extname(name);
+    name = path.basename(name, ext) + '-' + randomUUID() + ext;
+  }
+  fs.renameSync(item.path, path.join(dir, name));
+  const sidecar = item.sidecar || item.path.replace(/\.[^.]+$/, '.txt');
+  if (fs.existsSync(sidecar)) fs.renameSync(sidecar, path.join(dir, name + '.txt'));
+  else if (name !== path.basename(item.path)) fs.writeFileSync(path.join(dir, name + '.txt'), item.outName || path.basename(item.path));
+  seen.delete(item.path);
+}
+
 function markDone(item) {
   try {
-    const dest = path.join(DONE, path.basename(item.path));
-    fs.renameSync(item.path, dest);
-    const sidecar = item.path.replace(/\.[^.]+$/, '.txt');
-    if (fs.existsSync(sidecar)) {
-      fs.renameSync(sidecar, path.join(DONE, path.basename(sidecar)));
-    }
-    seen.delete(item.path);
+    moveItem(item, DONE);
     log(`投递箱：${item.fileName} 已移入 done/`);
   } catch (e) {
     log('投递箱：移动到 done 失败 ' + (e && e.message));
@@ -136,8 +146,7 @@ function markDone(item) {
 /** 失败挪进 failed/，别每 10 秒重试一遍 */
 function markFailed(item) {
   try {
-    fs.renameSync(item.path, path.join(FAILED, path.basename(item.path)));
-    seen.delete(item.path);
+    moveItem(item, FAILED);
     log(`投递箱：${item.fileName} 上传失败，已移入 failed/`);
   } catch (e) {
     log('投递箱：移动到 failed 失败 ' + (e && e.message));

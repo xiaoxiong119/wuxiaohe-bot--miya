@@ -3,7 +3,8 @@ const path = require('path');
 // 统一任务标识；版本后缀由 epname.stripRev 处理，绝不能将裸数字场次当版本。
 function parse(name) {
   const raw = path.basename(String(name || '')).replace(/\.(mp4|mov|mkv|avi|m4v|webm)$/i, '').replace(/^《[^》]+》\s*/, '').trim();
-  const m = /^(?:第\s*|ep\s*)?(\d{1,4})(?:\s*集)?(?:\s*[-_]\s*(\d{1,4})|\s*第\s*(\d{1,4})\s*场)?(?=$|[\s_\-（(]|修改|改|v\d|终稿|定稿)/i.exec(raw);
+  // 集数后面允许的分隔：空格、括号、书名号之外的各种标点都放过（【修改】、·、，这类）
+  const m = /^(?:第\s*|ep\s*)?(\d{1,4})(?:\s*集)?(?:\s*[-_]\s*(\d{1,4})|\s*第\s*(\d{1,4})\s*场)?(?=$|[\s_\-（()）【】·．、,，]|修改|改|v\d|终稿|定稿)/i.exec(raw);
   if (!m) return null;
   const episode = Number(m[1]), scene = m[2] || m[3] ? Number(m[2] || m[3]) : null;
   if (episode < 1 || (scene !== null && scene < 1)) return null;

@@ -14,3 +14,9 @@ state.json
 flow-state.json
 drive-state.json
 tbpz-sync-log.jsonl
+
+admin-commands
+admin-*.json
+.restart-feedback.json
+release-draft.json
+.bot.lock-recovery

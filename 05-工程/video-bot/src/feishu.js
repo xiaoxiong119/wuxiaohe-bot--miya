@@ -124,7 +124,7 @@ function scopesFrom(msg) {
 
 function scopeApplyUrl(scopes) {
   if (!scopes || !scopes.length) return '';
-  return 'https://open.feishu.cn/page/scope-apply?clientID=' + cfg.APP_ID +
+  return 'https://example.invalid/feishu-resource' + cfg.APP_ID +
     '&scopes=' + encodeURIComponent(scopes.join(','));
 }
 
@@ -174,8 +174,9 @@ let _bestIp = { ip: '', at: 0 };
 
 async function tenantToken() {
   if (_tok && Date.now() < _tok.exp) return _tok.v;
-  const r = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+  const r = await fetch('https://example.invalid/feishu-resource', {
     method: 'POST',
+    signal: AbortSignal.timeout(15000),
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify({ app_id: cfg.APP_ID, app_secret: cfg.APP_SECRET }),
   });
@@ -190,8 +191,9 @@ function probeIp(ip, url, token, ms) {
   return new Promise((resolve) => {
     let n = 0;
     let done = false;
-    const finish = () => { if (!done) { done = true; resolve(n); } };
+    const finish = () => { if (!done) { done = true; clearTimeout(deadline); resolve(n); } };
     let req;
+    const deadline = setTimeout(() => { req?.destroy(); finish(); }, ms);
     try {
       req = https.request({
         host: ip,
@@ -206,6 +208,7 @@ function probeIp(ip, url, token, ms) {
         res.on('error', finish);
       });
     } catch (e) {
+      clearTimeout(deadline);
       return resolve(0);
     }
     req.setTimeout(ms, () => { req.destroy(); finish(); });
@@ -234,101 +237,11 @@ async function bestIp(url, token) {
   return best.ip;
 }
 
-/** 走到指定 IP 的 https 下载，边收边写盘（不落内存） */
-function httpsDownload(url, token, ip, destPath) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const pin = !!(ip && u.hostname === FEISHU_HOST);
-    const opts = {
-      // 直连指定 IP，SNI / Host 还是域名（Node 22 的 lookup 回调签名跟 autoSelectFamily 打架，
-      // 用 lookup 会报 Invalid IP address: undefined，所以走 host+servername 这条路）
-      host: pin ? ip : u.hostname,
-      port: u.port || 443,
-      path: u.pathname + u.search,
-      method: 'GET',
-      headers: { Authorization: 'Bearer ' + token },
-    };
-    if (pin) {
-      opts.servername = FEISHU_HOST;
-      opts.headers.Host = FEISHU_HOST;
-    }
-    const req = https.request(opts, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        const next = new URL(res.headers.location, url).toString();
-        return httpsDownload(next, token, '', destPath).then(resolve, reject);
-      }
-      if (res.statusCode !== 200) {
-        let body = '';
-        res.on('data', (d) => { if (body.length < 300) body += d.toString(); });
-        res.on('end', () => reject(new Error(`HTTP ${res.statusCode} ${body.slice(0, 160)}`)));
-        return;
-      }
-      fs.mkdirSync(path.dirname(destPath), { recursive: true });
-      const out = fs.createWriteStream(destPath);
-      res.pipe(out);
-      out.on('finish', () => resolve(destPath));
-      out.on('error', reject);
-      res.on('error', reject);
-    });
-    req.on('error', reject);
-    req.end();
-  });
-}
-
-/**
- * 通用「按 URL 下载到文件」：自动挑最快的飞书线路、边收边写盘、按 MB 报进度。
- * 云盘文件（drive/v1/files/:token/download）和消息附件都用它。
- */
+/** 飞书消息附件与云盘共用的流式下载，限制停滞时间和跳转次数。 */
 async function downloadToFile(url, token, destPath, onProgress) {
   const u = new URL(url);
-  const ip = await bestIp(u.pathname + u.search, token);
-  const pin = !!ip && u.hostname === FEISHU_HOST;
-  return new Promise((resolve, reject) => {
-    const opts = {
-      host: pin ? ip : u.hostname,
-      port: u.port || 443,
-      path: u.pathname + u.search,
-      method: 'GET',
-      headers: { Authorization: 'Bearer ' + token },
-    };
-    if (pin) {
-      opts.servername = FEISHU_HOST;
-      opts.headers.Host = FEISHU_HOST;
-    }
-    const req = https.request(opts, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        const next = new URL(res.headers.location, url).toString();
-        return downloadToFile(next, token, destPath, onProgress).then(resolve, reject);
-      }
-      if (res.statusCode !== 200) {
-        let body = '';
-        res.on('data', (d) => { if (body.length < 300) body += d.toString(); });
-        res.on('end', () => reject(new Error(`HTTP ${res.statusCode} ${body.slice(0, 160)}`)));
-        return;
-      }
-      fs.mkdirSync(path.dirname(destPath), { recursive: true });
-      const out = fs.createWriteStream(destPath);
-      const total = Number(res.headers['content-length']) || 0;
-      let got = 0;
-      let mark = 0;
-      res.on('data', (d) => {
-        got += d.length;
-        const mb = got / 1024 / 1024;
-        if (onProgress && mb >= mark + 50) {
-          mark = Math.floor(mb / 50) * 50;
-          try { onProgress(mb, total / 1024 / 1024); } catch (e) { /* 忽略 */ }
-        }
-      });
-      res.pipe(out);
-      out.on('finish', () => resolve({ bytes: got, path: destPath }));
-      out.on('error', reject);
-      res.on('error', reject);
-    });
-    req.on('error', reject);
-    req.end();
-  });
+  const ip = u.hostname === FEISHU_HOST ? await bestIp(u.pathname + u.search, token) : '';
+  return require('./http-download').downloadFile(url, token, ip, destPath, onProgress);
 }
 
 async function downloadResource(att, destPath, onProgress) {
@@ -374,7 +287,7 @@ async function downloadResource(att, destPath, onProgress) {
         const token = await tenantToken();
         const resPath = `/open-apis/im/v1/messages/${att.messageId}/resources/${att.fileKey}?type=${type}`;
         const ip = await bestIp(resPath, token);
-        await httpsDownload(`https://${FEISHU_HOST}${resPath}`, token, ip, destPath);
+        await require('./http-download').downloadFile(`https://${FEISHU_HOST}${resPath}`, token, ip, destPath);
         clearInterval(watch);
         const mb = fs.statSync(destPath).size / 1024 / 1024;
         log(`已下载 ${att.fileName}（${mb.toFixed(2)} MB）`);
@@ -410,19 +323,20 @@ async function downloadResource(att, destPath, onProgress) {
  * 一次网络半死就能把事件处理链挂住十几分钟——2026-10-27 踩过。
  */
 function withTimeout(promise, ms, label) {
+  let timer;
   return Promise.race([
     promise,
     new Promise((_, reject) => {
-      const t = setTimeout(() => reject(new Error(`${label || '请求'}超时（${Math.round(ms / 1000)} 秒没响应）`)), ms);
-      if (t.unref) t.unref();
+      timer = setTimeout(() => reject(new Error(`${label || '请求'}超时（${Math.round(ms / 1000)} 秒没响应）`)), ms);
+      timer.unref?.();
     }),
-  ]);
+  ]).finally(() => clearTimeout(timer));
 }
 
-/** 发一条纯文本到会话（20 秒超时，不许把事件循环挂死） */
+/** 发一条纯文本到会话（10 秒超时） */
 async function sendText(chatId, text) {
   try {
-    await withTimeout(getClient().im.v1.message.create({
+    const response = await withTimeout(getClient().im.v1.message.create({
       params: { receive_id_type: 'chat_id' },
       data: {
         receive_id: chatId,
@@ -430,6 +344,7 @@ async function sendText(chatId, text) {
         content: JSON.stringify({ text }),
       },
     }), 10000, '发消息');
+    if (response.code) throw new Error(response.msg || '发消息失败');
     return true;
   } catch (e) {
     log('⚠️ 回发消息失败：' + (e && e.message));
@@ -482,10 +397,11 @@ function parseTextCommand(message, command) {
 /** 按 open_id 发文本（投递箱回执用） */
 async function sendTextTo(openId, text) {
   try {
-    await withTimeout(getClient().im.v1.message.create({
+    const response = await withTimeout(getClient().im.v1.message.create({
       params: { receive_id_type: 'open_id' },
       data: { receive_id: openId, msg_type: 'text', content: JSON.stringify({ text }) },
     }), 10000, '发消息');
+    if (response.code) throw new Error(response.msg || '发消息失败');
     return true;
   } catch (e) {
     log('⚠️ 回发消息失败（open_id ' + openId + '）：' + (e && e.message));
@@ -497,10 +413,11 @@ async function sendTextTo(openId, text) {
 async function sendCardTo(openId, card) {
   if (!openId) return false;
   try {
-    await withTimeout(getClient().im.v1.message.create({
+    const response = await withTimeout(getClient().im.v1.message.create({
       params: { receive_id_type: 'open_id' },
       data: { receive_id: openId, msg_type: 'interactive', content: JSON.stringify(card) },
     }), 10000, '发卡片');
+    if (response.code) throw new Error(response.msg || '发卡片失败');
     return true;
   } catch (e) {
     log('⚠️ 发卡片给 ' + openId + ' 失败：' + ((e && e.message) || e));
@@ -511,7 +428,7 @@ async function sendCardTo(openId, card) {
 /** 发一张交互卡片到会话 */
 async function sendInteractive(chatId, card) {
   try {
-    await withTimeout(getClient().im.v1.message.create({
+    const response = await withTimeout(getClient().im.v1.message.create({
       params: { receive_id_type: 'chat_id' },
       data: {
         receive_id: chatId,
@@ -519,6 +436,7 @@ async function sendInteractive(chatId, card) {
         content: JSON.stringify(card),
       },
     }), 10000, '发卡片');
+    if (response.code) throw new Error(response.msg || '发卡片失败');
     return true;
   } catch (e) {
     log('⚠️ 发卡片失败：' + (e && e.message));

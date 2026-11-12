@@ -7,6 +7,8 @@
 const cfg = require('./config');
 const { getClient } = require('./feishu');
 const { log } = require('./log');
+const { allPages, dataOf } = require('./pagination');
+const { withTimeout } = require('./feishu');
 
 const B = cfg.BASE || {};
 
@@ -16,11 +18,11 @@ function ready() {
 
 /** 字段元数据（含单选项），用于校验值、拿选项列表 */
 async function listFields() {
-  const res = await getClient().bitable.v1.appTableField.list({
+  const rows = await allPages(pageToken => getClient().bitable.v1.appTableField.list({
     path: { app_token: B.appToken, table_id: B.tableId },
-    params: { page_size: 100 },
-  });
-  return ((res.data || res).items || []).map((f) => ({
+    params: { page_size: 100, page_token: pageToken },
+  }), { label: '读字段' });
+  return rows.map((f) => ({
     name: f.field_name,
     type: f.type,
     options: ((f.property && f.property.options) || []).map((o) => o.name),
@@ -29,9 +31,9 @@ async function listFields() {
 
 /** 按「集数」精确查记录 */
 async function findRecords(episode) {
-  const res = await getClient().bitable.v1.appTableRecord.search({
+  return allPages(pageToken => getClient().bitable.v1.appTableRecord.search({
     path: { app_token: B.appToken, table_id: B.tableId },
-    params: { page_size: 20 },
+    params: { page_size: 500, page_token: pageToken },
     data: {
       field_names: [],
       filter: {
@@ -41,26 +43,29 @@ async function findRecords(episode) {
         ],
       },
     },
-  });
-  return (res.data || res).items || [];
+  }), { label: '查制作任务' });
 }
 
 /** 改一条记录的若干字段 */
 async function updateRecord(recordId, fields) {
-  const res = await getClient().bitable.v1.appTableRecord.update({
+  const res = await withTimeout(getClient().bitable.v1.appTableRecord.update({
     path: { app_token: B.appToken, table_id: B.tableId, record_id: recordId },
     data: { fields },
-  });
-  return (res.data || res).record;
+  }), 20000, '写记录');
+  const record = dataOf(res, '写记录').record;
+  if (!record) throw new Error('写记录返回缺少回执，请先核对表格再重试');
+  return record;
 }
 
 /** 新建一条记录（测试集不存在时用） */
 async function createRecord(fields) {
-  const res = await getClient().bitable.v1.appTableRecord.create({
+  const res = await withTimeout(getClient().bitable.v1.appTableRecord.create({
     path: { app_token: B.appToken, table_id: B.tableId },
     data: { fields },
-  });
-  return (res.data || res).record;
+  }), 20000, '写记录');
+  const record = dataOf(res, '写记录').record;
+  if (!record) throw new Error('写记录返回缺少回执，请先核对表格再重试');
+  return record;
 }
 
 /** 把人名字段拍平 */
@@ -101,8 +106,8 @@ function matchOption(input, options) {
   const aliases = B.valueAliases || {};
   if (aliases[v] && options.includes(aliases[v])) return aliases[v];
   if (options.includes(v)) return v;
-  const byContains = options.find((o) => o.includes(v) || v.includes(o));
-  return byContains || '';
+  const matches = options.filter((o) => o.includes(v) || v.includes(o));
+  return matches.length === 1 ? matches[0] : '';
 }
 
 /**

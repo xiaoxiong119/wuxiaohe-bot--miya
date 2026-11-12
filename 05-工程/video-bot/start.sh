@@ -11,6 +11,7 @@ mkdir -p logs downloads
 
 export PATH="$HOME/.local/bin:$PATH"
 export BSK_AUTO_START=0
+export TZ=Asia/Shanghai
 
 # 别继承 WorkBuddy / 终端里的代理：那个本地代理随会话消失，机器人会全线 ECONNREFUSED
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
@@ -34,7 +35,8 @@ if [ -n "$NODE" ]; then
 fi
 if [ -z "$NODE" ]; then
   for _c in "$HOME"/.workbuddy/binaries/node/versions/*/bin/node; do
-    [ -x "$_c" ] && NODE="$_c" && break
+    [ -x "$_c" ] || continue
+    "$_c" -e 'if (Number(process.versions.node.split(".")[0]) < 22) process.exit(1)' 2>/dev/null && NODE="$_c" && break
   done
 fi
 if [ -z "$NODE" ]; then
@@ -57,7 +59,7 @@ fi
 
 # 0. 防重复上传：旧的轮询 daemon 还在跑就先停掉
 # 0.5 清掉上次没跑完的 /tbpz 采集脚本（孤儿进程会一直开着浏览器页面占着 bsk）
-pkill -f 'tbpz-collect.sh' 2>/dev/null && echo "已清掉残留的 /tbpz 采集进程" || true
+pkill -f '[/]tbpz-collect(_v00[45])?\.sh' 2>/dev/null && echo "已清掉残留的 /tbpz 采集进程" || true
 OLD_PID_FILE="$BASE/../video-to-mediatrack/daemon.pid"
 # 不能只看 daemon.pid：它是陈旧值（78625）时就形同虚设。
 # 注意旧 launchd 任务是通过软链 ~/wuxiaohe-upmedia 起的，命令行里不含 video-to-mediatrack，两个都要匹配。
@@ -77,7 +79,7 @@ if [ -f "$AGENT_PLIST" ] && ! launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2
   if launchctl bootstrap "gui/$(id -u)" "$AGENT_PLIST" 2>/dev/null; then
     sleep 4
     if [ -f bot.pid ] && kill -0 "$(cat bot.pid)" 2>/dev/null; then
-      echo "✓ 已交给开机自启任务（$LABEL）启动（pid $(cat bot.pid)）"
+      echo "✓ 已交给开机自启任务（${LABEL}）启动（pid $(cat bot.pid)）"
       echo "日志：tail -f $BASE/logs/bot.log"
       exit 0
     fi

@@ -37,6 +37,7 @@ module.exports = {
   WAIT_SECONDS: raw.waitSeconds || 300,
   BASE: require('./project-context').base,
   BASE_COMMAND: raw.baseCommand || '/base',
+  UPLOAD: raw.upload || {},
   FLOW: raw.flow || {},
   HEALTH: raw.health || {},
   RELEASE: raw.release || {},

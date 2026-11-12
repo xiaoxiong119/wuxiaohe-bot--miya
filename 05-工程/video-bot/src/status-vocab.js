@@ -14,6 +14,7 @@
  */
 const cfg = require('./config');
 const { log } = require('./log');
+const { allPages } = require('./pagination');
 
 const TTL = 5 * 60 * 1000;
 const cache = new Map(); // "appToken/tableId" -> { at, fields }
@@ -29,12 +30,10 @@ async function load(force) {
   try {
     // 懒加载，避免自检脚本（没有凭证）在建模块阶段就崩
     const { getClient } = require('./feishu');
-    const res = await getClient().bitable.v1.appTableField.list({
+    const items = await allPages(pageToken => getClient().bitable.v1.appTableField.list({
       path: { app_token: cfg.BASE.appToken, table_id: cfg.BASE.tableId },
-      params: { page_size: 100 },
-    });
-    if (res && res.code) throw new Error(res.msg || '读字段失败');
-    const items = ((res && res.data) || res || {}).items || [];
+      params: { page_size: 100, page_token: pageToken },
+    }), {label:'读状态词表',timeout:15000});
     const fields = {};
     for (const f of items) {
       const opts = (f.property && f.property.options) || [];

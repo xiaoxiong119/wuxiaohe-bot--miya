@@ -5,12 +5,15 @@ const path = require('path');
 const vm = require('vm');
 const root = path.resolve(__dirname, '..');
 const calls = [];
+const fixture=require('./test-fixtures').fixtures();
+fixture.config.privateNotificationOptOut=[{openId:'ou_fixture_blocked',name:'测试屏蔽人员'}];
+fs.writeFileSync(path.join(fixture.root,'config.json'),JSON.stringify(fixture.config));
 const sandbox = {
   require(name) {
     if (name === '@larksuiteoapi/node-sdk') return { Client: class {
       constructor() { this.im = { v1: { message: { create: async req => { calls.push(req); return { code: 0 }; } } } }; }
     } };
-    if (name === './config') return { ROOT: root, APP_ID: 'mock', APP_SECRET: 'mock' };
+    if (name === './config') return { ROOT: fixture.root, APP_ID: 'mock', APP_SECRET: 'mock' };
     if (name === './notification-policy') return require('../src/notification-policy');
     if (name === './log') return { log() {} };
     return require(name);
@@ -20,7 +23,7 @@ const sandbox = {
 vm.runInNewContext(fs.readFileSync(path.join(root, 'src/feishu.js'), 'utf8'), sandbox);
 (async () => {
   const api = sandbox.module.exports;
-  const blocked = '[已脱敏]';
+  const blocked = 'ou_fixture_blocked';
   assert.equal(await api.sendTextTo(blocked, '测试'), false);
   assert.equal(await api.sendCardTo(blocked, {}), false);
   await assert.rejects(api.getClient().im.v1.message.create({ params: { receive_id_type: 'open_id' }, data: { receive_id: blocked, msg_type: 'interactive' } }), { code: 'PRIVATE_NOTIFICATION_OPT_OUT' });

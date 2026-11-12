@@ -1,0 +1,32 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {createOutbox}=require('../src/notification-outbox');
+const {createStore}=require('../src/pending-uploads');
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'bot-ledgers-'));
+(async()=>{try{
+ const file=path.join(root,'outbox.json'),calls=[];let fail=true,valid=true,block='';
+ const deps={valid:async()=>valid,block:()=>block,send:async(id,card,uuid)=>{calls.push({id,uuid});if(id==='b'&&fail)throw Error('网络中断');return true;}};
+ let out=createOutbox(file,deps);
+ const event={key:'r1-cycle1',family:'r1-review',people:[{id:'a'},{id:'b'}],card:{},label:'一审'};
+ let r=await out.enqueue(event);assert.equal(r.sent,1);assert.equal(r.complete,false);
+ const id=out.list()[0].id,bUuid=calls.find(r=>r.id==='b').uuid;
+ out=createOutbox(file,deps); // 模拟崩溃重启；已送达的人不能再次调用接口。
+ for(let i=0;i<4;i++)await out.retry(id);
+ assert.equal(calls.filter(r=>r.id==='a').length,1);
+ assert.equal(out.list()[0].recipients.find(r=>r.id==='b').status,'pending');
+ assert(calls.filter(r=>r.id==='b').every(r=>r.uuid===bUuid),'发送超时和重启沿用同一去重标识');
+ fail=false;await out.retry(id);assert.equal(out.list()[0].recipients[1].status,'sent');
+ const before=calls.length;await out.retry(id);assert.equal(calls.length,before);
+ fail=true;await out.enqueue({...event,key:'r1-cycle2'});valid=false;await out.retry(out.list().at(-1).id);
+ assert.equal(out.list().at(-1).recipients[1].status,'stale');
+ valid=true;block='当前为免打扰时段（不补发）';await out.enqueue({...event,key:'r1-cycle3'});block='';await out.drain();assert.equal(calls.length,before+2,'免打扰后的旧消息不补发');
+ block='免通知';await out.enqueue({...event,key:'r1-cycle4'});assert.equal(out.list().at(-1).recipients[0].attempts,0);block='';fail=false;await out.drain();assert.equal(out.list().at(-1).recipients[0].status,'sent');
+ const store=createStore(root);const source=path.join(root,'video.mp4');fs.writeFileSync(source,'original');
+ const job={att:{messageId:'m1'},outName:'1-1.mp4',localPath:source,driveSourceToken:'drive1',uploadTarget:{projectUrl:'https://example.test/upload'},taskBinding:{recordId:'r1',signature:'s1'}};
+ const token=store.begin(job,source);
+ let restored=createStore(root);assert.equal(restored.list().length,1);assert(restored.blocks({...job,uploadTarget:structuredClone(job.uploadTarget)}));assert(restored.blocksDrive('drive1'));assert(restored.blocks({att:{messageId:'manual-new',driveToken:'drive1'},outName:'new.mp4'}),'同一云盘源换命令或文件名仍挂起');
+ restored.set(token,'pending','结果未知');assert(restored.blocks(job));assert.equal(fs.readFileSync(source,'utf8'),'original');
+ restored.set(token,'confirmed-uploaded','仅补写');assert(!restored.blocks(job));assert(!restored.blocksDrive('drive1'));
+ fs.writeFileSync(path.join(root,'pending-uploads.json'),'broken');assert.throws(()=>restored.list(),/JSON/);
+ console.log('PASS：逐人送达、独立补发、超过三次不丢失、重启恢复、去重标识、过期取消、免通知与免打扰、上传源持久挂起');
+}finally{fs.rmSync(root,{recursive:true,force:true})}})().catch(e=>{console.error(e);process.exitCode=1});

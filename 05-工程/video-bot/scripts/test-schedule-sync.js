@@ -9,7 +9,7 @@ const data = { revision: 1, has_more: false, ranges: [{ truncated: false, actual
     [cell('庭院'), cell('第23集-1'), cell('', '#8ee085'), cell('', '#fbbfbc'), cell('')],
     [cell(''), cell('第23集-2'), cell(''), cell('', '#fbbfbc'), cell('昕', '#ad82f7')],
   ] }] };
-const conf = { year: 2026, people: { '#8ee085': { id: 'p1', name: '韩欣蓓' }, '#ad82f7': { id: 'p2', name: '殷紫昕' }, '#fbbfbc': { id: 'p3', name: '陈俊杰' } }, ignoredColors: ['#ffffff'], sceneAliases: {}, verifiedScenes: {} };
+const conf = { year: 2026, people: { '#8ee085': { id: 'p1', name: '测试制作师甲' }, '#ad82f7': { id: 'p2', name: '测试制作师乙' }, '#fbbfbc': { id: 'p3', name: '测试制作师丙' } }, ignoredColors: ['#ffffff'], sceneAliases: {}, verifiedScenes: {} };
 const layout = { merged_cells: [{ range: 'A4:A5' }] };
 const result = parseSource(data, layout, conf);
 assert.equal(result.items.length, 2);
@@ -20,7 +20,7 @@ assert.deepEqual(result.items[1].fields['场景'], ['庭院']);
 assert.equal(result.items[1].fields['排期分段'], '第23集-2');
 const records = result.items.map((i, n) => ({ record_id: 'r' + n, fields: { ...i.fields, '审阅反馈': '通过', '进展': '已完成' } }));
 records.forEach(r => { r.fields['集数'] = String(r.fields['集数']); });
-assert.deepEqual(plan(result.items, records), { create: [], update: [], unchanged: 2 });
+assert.deepEqual(plan(result.items, records), { create: [], update: [], unchanged: 2, remove: [] });
 records[1].fields['制作师'] = [{ id: 'wrong' }];
 assert.deepEqual(plan(result.items, records).update, [{ record_id: 'r1', fields: { '制作师': [{ id: 'p2' }] } }]);
 assert.throws(() => plan(result.items, [records[0], records[0]]), /分段重复/);
@@ -44,12 +44,10 @@ assert.deepEqual(missingOptions(optionItems, optionFields).map(e => e.names), [[
     list: async () => ({ code: 0, data: { items: current } }),
     update: async ({path, data}) => { writes++; const field = current.find(f => f.field_id === path.field_id); Object.assign(field, data); return { code: 0 }; },
   } } } };
-  // Single selectable field: preserve its old ID and color; second run adds nothing.
-  await ensureOptions(client, {}, [{fields:{场景:['新场景']}}]);
-  assert.deepEqual(current[0].property.options[0], {id:'o',name:'庭院',color:2});
-  await ensureOptions(client, {}, [{fields:{场景:['新场景']}}]);
-  assert.equal(writes, 1);
-  console.log('PASS：选项去重、单选/多选、保留已有选项、回读与重复执行');
+  await assert.rejects(ensureOptions(client, {}, [{fields:{场景:['新场景']}}]), /单独配置选项/);
+  await ensureOptions(client, {}, [{fields:{场景:['庭院']}}]);
+  assert.equal(writes, 0);
+  console.log('PASS：日常同步不修改表结构或选项');
 })().catch(e => { console.error(e); process.exitCode = 1; });
 
 const legacy = result.items.map((item, n) => ({record_id:'legacy'+n, fields:{集数:String(item.fields['集数']),场次:String(item.fields['场次'])}}));
@@ -60,10 +58,10 @@ assert.deepEqual(result.items.map(i => i.fields['场次']), [1,2]);
 console.log('PASS：集数与场次安全匹配、重复拦截、分段场次');
 
 const defaultPlan = plan(result.items, result.items.map((item,n)=>({record_id:'d'+n,fields:{...item.fields,进展:n?'已完成':''}})), {进展:'待开始'});
-assert.deepEqual(defaultPlan.update, [{record_id:'d0',fields:{进展:'待开始'}}]);
-assert.equal(defaultPlan.unchanged,1);
+assert.deepEqual(defaultPlan.update, []);
+assert.equal(defaultPlan.unchanged,2);
 assert.equal(plan(result.items, [], {进展:'待开始'}).create[0].fields.进展,'待开始');
-console.log('PASS：旧记录只补空白默认值、保留已有状态、新增携带默认值');
+console.log('PASS：旧记录不写业务状态、新增携带默认值');
 
 const points = require('../src/points-sync');
 const pointsItems = [{fields:{集数:9,场次:1}}, {fields:{集数:9,场次:2}}, {fields:{集数:10,场次:1}}];
@@ -77,3 +75,13 @@ assert.equal(pointsPlan.unchanged, 1);
 assert.equal(points.plan(pointsItems, [...existingPoints, ...pointsPlan.create], '《逆天萌兽3》').create.length, 0);
 assert.throws(() => points.plan(pointsItems, [existingPoints[0], existingPoints[0]]), /重复/);
 console.log('PASS：积分按集数场次补齐、第三季名称、保留已有积分和重复执行');
+
+const {preserveExistingSegments} = require('../src/schedulesync');
+const merged = {...result.items[0], key:'第23集', mergedKeys:result.items.map(x=>x.key), segments:result.items};
+const preserved = preserveExistingSegments([merged], records);
+assert.equal(preserved.length,2);
+assert.equal(plan([merged], records).remove.length,0);
+assert.equal(plan([merged], records).create.length,0);
+assert.ok(plan([merged], records).update.every(x=>!('审阅反馈' in x.fields)&&!('进展' in x.fields)));
+assert.throws(()=>plan([{...merged,segments:undefined}],records),/缺少原始分段/);
+console.log('PASS：保留原分段、记录ID和业务字段，禁止删除');

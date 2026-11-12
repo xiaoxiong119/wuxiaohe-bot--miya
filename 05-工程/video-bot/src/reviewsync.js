@@ -1,3 +1,4 @@
+const { writeJson } = require('./json-file');
 /**
  * /tbpz —— 分秒帧批注 → 飞书多维表格
  *
@@ -11,37 +12,12 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const cfg = require('./config');
-const { getClient } = require('./feishu');
+const { getClient, withTimeout } = require('./feishu');
+const { allPages, dataOf } = require('./pagination');
 const { log } = require('./log');
 
 const HOME = process.env.HOME;
-const BSK = path.join(HOME, '.local/bin/bsk');
 const PATH_ENV = [path.join(HOME, '.local/bin'), process.env.PATH].join(':');
-
-const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
-
-function bsk(args, timeoutMs) {
-  try {
-    return execFileSync(BSK, args, {
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, BSK_AUTO_START: '0', PATH: PATH_ENV },
-      maxBuffer: 32 * 1024 * 1024,
-      timeout: timeoutMs || 60000,
-      killSignal: 'SIGKILL',
-    });
-  } catch (e) {
-    // 超时/被杀：播放器页会一直加载视频流，evaluate 容易卡住，这里兜住
-    if (process.env.TBPZ_DEBUG) console.log('[dbg] bsk failed:', e.code || e.message);
-    return '';
-  }
-}
-
-function evalIn(sid, js) {
-  const raw = bsk(['evaluate', '--session', sid, js], 15000);
-  if (!raw) return '';
-  return raw.trim().split('\n').pop();
-}
 
 // ---------------------------------------------------------------- 配置
 
@@ -79,15 +55,21 @@ function readConfig(profile = 'default') {
   return raw[profileKey(profile)] || {};
 }
 
-function writeConfig(patch, profile = 'default') {
+function writeConfig(patch, profile = 'default', expectedTarget) {
   const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
   const key = profileKey(profile);
+  if (expectedTarget && ['mediatrackUrl', 'appToken', 'tableId'].some(field => raw[key]?.[field] !== expectedTarget[field])) {
+    throw Object.assign(new Error('批注同步目标已变更，未推进新目标的增量水位，请重新预览'), {code:'SYNC_TARGET_CHANGED'});
+  }
   raw[key] = Object.assign({}, raw[key], patch);
-  if (profile.startsWith('nts3') && patch.mediatrackUrl) {
+  // 只有「项目文件页」链接才同步给上传目标。
+  // 2026-11-10：粗剪批注换成 /reviews/ 审片空间链接后，原来无条件镜像会把上传目录写成审片链接，
+  // 下次 /upmedia 直接炸——这里加个判断。
+  if (profile.startsWith('nts3') && patch.mediatrackUrl && /mediatrack\.cn\/projects\/\d+/.test(patch.mediatrackUrl)) {
     const project = (raw.sceneProjects || []).find(p => p.key === 'nts3');
     if (project) project[profile === 'nts3FineCut' ? 'trimPreviewUrl' : 'projectUrl'] = patch.mediatrackUrl;
   }
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2) + '\n');
+  writeJson(CONFIG_PATH, raw);
   return raw[key];
 }
 
@@ -112,28 +94,6 @@ async function parseBitableUrl(url) {
 }
 
 // ---------------------------------------------------------------- 浏览器
-
-const JS_LIST = `
-(() => {
-  const items = [...document.querySelectorAll('div.item')];
-  return JSON.stringify(items.map((c) => {
-    const badge = c.querySelector('[class*="_comment_"]');
-    return {
-      text: c.innerText.replace(/\\n/g, ' ').trim(),
-      count: badge ? (parseInt(badge.innerText, 10) || 0) : 0,
-    };
-  }));
-})()
-`;
-
-const JS_COMMENTS = `
-(() => {
-  const boxes = [...document.querySelectorAll('.JaxCommentBox')];
-  return JSON.stringify(boxes.map((b) => b.innerText));
-})()
-`;
-
-const JS_HAS_PLAYER = `location.href.includes('/player/') ? '1' : '0'`;
 
 /** 从卡片文字里抠文件名：「5 01:27 124 .mov 2026-10-27 11:55」→ 124.mov */
 function fileNameOf(text) {
@@ -191,68 +151,29 @@ function parseCommentBox(text) {
 
 /** 把「今天 11:52」「昨天 09:01」「10-26」翻成毫秒时间戳 */
 function dateToMs(text, at = Date.now()) {
-  if (!text) return 0;
-  const now = new Date(at);
-  const hm = /(\d{1,2}):(\d{2})/.exec(text);
-  const hh = hm ? Number(hm[1]) : 0;
-  const mm = hm ? Number(hm[2]) : 0;
-
-  if (text.includes('今天')) {
-    const d = new Date(now);
-    d.setHours(hh, mm, 0, 0);
-    return d.getTime();
+  const value = String(text || '').trim();
+  if (!value) return 0;
+  const day = new Date(Number(at) + 8 * 3600000);
+  const hm = /(?:^|\s)(\d{1,2}):(\d{2})(?::\d{2})?/.exec(value);
+  const hour = hm ? Number(hm[1]) : 0, minute = hm ? Number(hm[2]) : 0;
+  if (hour > 23 || minute > 59) return 0;
+  const relative = /^(今天|昨天|前天)/.exec(value);
+  let year, month, date;
+  if (relative) {
+    day.setUTCDate(day.getUTCDate() - ({今天:0, 昨天:1, 前天:2}[relative[1]]));
+    year = day.getUTCFullYear(); month = day.getUTCMonth() + 1; date = day.getUTCDate();
+  } else {
+    const full = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s|$)/.exec(value);
+    const short = /^(\d{1,2})-(\d{1,2})(?:\s|$)/.exec(value);
+    if (!full && !short) return 0;
+    year = full ? Number(full[1]) : day.getUTCFullYear();
+    month = Number(full ? full[2] : short[1]); date = Number(full ? full[3] : short[2]);
+    // 不含年份的历史批注在跨年后仍归属最近一次该日期。
+    if (!full && month > day.getUTCMonth() + 1) year--;
   }
-  if (text.includes('昨天')) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - 1);
-    d.setHours(hh, mm, 0, 0);
-    return d.getTime();
-  }
-  const md = /(\d{1,2})-(\d{1,2})/.exec(text);
-  if (md) {
-    const d = new Date(now.getFullYear(), Number(md[1]) - 1, Number(md[2]), hh, mm, 0, 0);
-    return d.getTime();
-  }
-  return 0;
-}
-
-/** 扫一个视频，返回批注数组 */
-async function readVideoComments(sid, file) {
-  const js = `
-  (() => {
-    const cards = [...document.querySelectorAll('div.item')];
-    const hit = cards.find((c) => c.innerText.replace(/\\s+/g, '').includes(${JSON.stringify(file.replace(/\s+/g, ''))}));
-    if (!hit) return 'NOT_FOUND';
-    const th = hit.querySelector('[class*=thumbnail]') || hit;
-    th.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
-    hit.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
-    return 'OK';
-  })()
-  `;
-  if (process.env.TBPZ_DEBUG) console.log('[dbg] dblclick start');
-  const r = evalIn(sid, js);
-  if (process.env.TBPZ_DEBUG) console.log('[dbg] dblclick ->', String(r).slice(0, 40));
-  if (r.includes('NOT_FOUND')) return null;
-
-  // 播放器起来 + 批注加载都要时间，轮询最多 25 秒
-  let clicked = false;
-  for (let i = 0; i < 10; i++) {
-    await sleep(2500);
-    const got = readCommentsOnce(sid);
-    if (process.env.TBPZ_DEBUG) console.log('[dbg] poll', i, 'got', got.length);
-    if (got.length) return got;
-
-    if (!clicked && i >= 2) {
-      clicked = true;
-      try {
-        bsk(['evaluate', '--session', sid,
-          `(() => { const t = [...document.querySelectorAll('*')].find(e => e.innerText === '批注' && !e.children.length); if (t) t.click(); return '1'; })()`]);
-      } catch (e) {
-        /* 忽略 */
-      }
-    }
-  }
-  return [];
+  const stamp = Date.UTC(year, month - 1, date, hour, minute) - 8 * 3600000;
+  const check = new Date(stamp + 8 * 3600000);
+  return check.getUTCFullYear() === year && check.getUTCMonth() === month - 1 && check.getUTCDate() === date ? stamp : 0;
 }
 
 /**
@@ -288,7 +209,7 @@ function parseCommentsFromBody(text) {
     let j = i + 1;
     for (; j < seg.length; j++) {
       const line = seg[j];
-      if (/^(今天|昨天|前天)/.test(line) || /^\d{1,2}-\d{1,2}(\s|$)/.test(line)) {
+      if (/^(今天|昨天|前天)/.test(line) || /^(?:\d{4}-)?\d{1,2}-\d{1,2}(\s|$)/.test(line)) {
         dateText = line;
         break;
       }
@@ -301,42 +222,17 @@ function parseCommentsFromBody(text) {
   return out;
 }
 
-function readCommentsOnce(sid) {
-  const raw = evalIn(sid, 'document.body.innerText');
-  let text = '';
-  try {
-    text = JSON.parse(raw);
-  } catch (e) {
-    text = raw;
-  }
-  return parseCommentsFromBody(text);
-}
-
-async function backToList(sid, projectUrl) {
-  bsk(['navigate', '--session', sid, projectUrl]);
-  await sleep(6);
-}
-
 // ---------------------------------------------------------------- 写表
 
 async function loadExisting(appToken, tableId, signal) {
-  const out = [];
-  let token = '';
-  for (let i = 0; i < 20; i++) {
-    if (signal?.aborted) break;
-    const res = await getClient().bitable.v1.appTableRecord.search({
+  if (signal?.aborted) return [];
+  return allPages(token => {
+    if (signal?.aborted) throw new Error('批注同步已中断');
+    return getClient().bitable.v1.appTableRecord.search({
       path: { app_token: appToken, table_id: tableId },
-      params: { page_size: 500, page_token: token || undefined },
-      data: {},
+      params: { page_size: 500, page_token: token || undefined }, data: {},
     });
-    if (res.code) throw new Error(res.msg || `飞书错误 ${res.code}`);
-    const d = res.data || res;
-    out.push(...(d.items || []));
-    if (!d.has_more) break;
-    token = d.page_token || '';
-    if (!token) break;
-  }
-  return out;
+  }, { label: '读已有批注' });
 }
 
 function rowKey(episode, timeline, content) {
@@ -355,17 +251,17 @@ function cleanAuthor(s) {
 const fieldNameCache = new Map();
 async function tableHasField(appToken, tableId, name) {
   const key = `${appToken}|${tableId}`;
-  if (!fieldNameCache.has(key)) {
-    const res = await getClient().bitable.v1.appTableField.list({
+  const cached = fieldNameCache.get(key);
+  if (!cached || Date.now() - cached.at >= 5 * 60 * 1000) {
+    const items = await allPages(pageToken => getClient().bitable.v1.appTableField.list({
       path: { app_token: appToken, table_id: tableId },
-      params: { page_size: 100 },
-    });
-    if (res.code) throw new Error(res.msg || `读字段失败 ${res.code}`);
-    const d = res.data || res;
-    fieldNameCache.set(key, new Set((d.items || []).map(f => f.field_name)));
+      params: { page_size: 100, page_token: pageToken },
+    }), {label:'读批注表字段'});
+    fieldNameCache.set(key, {at:Date.now(),names:new Set(items.map(f=>f.field_name))});
   }
-  return fieldNameCache.get(key).has(name);
+  return fieldNameCache.get(key).names.has(name);
 }
+
 function existingKeys(records, conf = {}) {
   const set = new Set();
   for (const r of records) {
@@ -428,9 +324,9 @@ async function upsertEpisodeRows(appToken, tableId, rows, signal) {
       if (who.size) fields['批注人'] = [...who].join('、');
     }
     const api = getClient().bitable.v1.appTableRecord;
-    const result = previous
-      ? await api.update({path:{app_token:appToken,table_id:tableId,record_id:previous.record_id || previous.id},data:{fields}})
-      : await api.create({path:{app_token:appToken,table_id:tableId},data:{fields}});
+    const result = await withTimeout(previous
+      ? api.update({path:{app_token:appToken,table_id:tableId,record_id:previous.record_id || previous.id},data:{fields}})
+      : api.create({path:{app_token:appToken,table_id:tableId},data:{fields}}), 30000, '写整集批注');
     if (result.code) throw new Error(result.msg || '整集批注汇总写入失败');
     written += incoming.length;
   }
@@ -460,10 +356,10 @@ async function createRows(appToken, tableId, rows, signal, conf = {}) {
     }
     if (row.at) fields['批注日期'] = row.at;
     try {
-      const res = await getClient().bitable.v1.appTableRecord.create({
+      const res = await withTimeout(getClient().bitable.v1.appTableRecord.create({
         path: { app_token: appToken, table_id: tableId },
         data: { fields },
-      });
+      }), 30000, '写批注');
       if (res.code) throw new Error(res.msg || `飞书错误 ${res.code}`);
       ok++;
     } catch (e) {
@@ -581,7 +477,7 @@ async function writePreview(opts) {
     comments: cache.rows.length, written,
   }) + '\n');
   if (!opts.signal?.aborted && cache.complete && written === fresh.length) {
-    writeConfig({ lastSyncAt: Math.max(conf.lastSyncAt || 0, cache.runStart) }, profile);
+    writeConfig({ lastSyncAt: Math.max(conf.lastSyncAt || 0, cache.runStart) }, profile, cache);
   }
   return { videos: cache.perVideo.length, comments: cache.rows.length, fresh: fresh.length, written,
     dryRun: false, full: cache.full, sinceMs: cache.sinceMs, perVideo: cache.perVideo,
@@ -623,7 +519,7 @@ async function run(opts = {}) {
   // 浏览器采集交给 bash 脚本：Node 里连续调 bsk evaluate 会卡住
   const outFile = opts.collectedFile || path.join(require('os').tmpdir(), `tbpz-${Date.now()}.jsonl`);
   // v003（2026-11-02 12:35）：先确认列表排序为「更新时间/由近到远」，再按角标筛目标、滚动读全。
-  // 旧版 tbpz-collect.sh / _v002 保留不删。
+  // v001/v002/v003 已移入 09-归档，原入口只提示停用。
   // v005（2026-11-04）：审片空间 /reviews/ 链接专用 —— 页面上 bsk 走共享标签页策略，
   // 每次 evaluate 都要 cooperate context，v004 会静默读空。项目文件页仍用 v004（稳定）。
   const collector = /\/reviews\//.test(projectUrl)
@@ -645,21 +541,26 @@ async function run(opts = {}) {
   let freshTotal = 0;
   let writtenTotal = 0;
   let processedLines = 0;
+  let parseFailed = false;
   // 写表串行队列：解析（同步）与写表（异步）分离，避免「等自己」死锁
   let writeChain = Promise.resolve();
 
-  function doDrain(write) {
+  function doDrain(write, final) {
     if (!fs.existsSync(outFile)) return;
     const lines = fs.readFileSync(outFile, 'utf8').split('\n');
-    if (lines.length && lines[lines.length - 1] === '') lines.pop();
+    if (!final || lines[lines.length - 1] === '') lines.pop();
     const todo = lines.slice(processedLines);
     processedLines = lines.length;
     for (const line of todo) {
       let o;
-      try { o = JSON.parse(line); } catch (e) { continue; }
+      try { o = JSON.parse(line); } catch (e) { parseFailed = true; continue; }
       const identity = require('./task-identity').parse(o.file);
       const ep = identity?.episode ?? null;
       const comments = Array.isArray(o.comments) ? o.comments : parseCommentsFromBody(o.body);
+      if (Number(o.count) > comments.length) {
+        parseFailed = true;
+        log(`批注未读全（${o.file}）：读到 ${comments.length}，角标 ${o.count}；本轮不推进水位`);
+      }
       const rows = comments.map((c) => ({
         episode: ep,
         scene: identity?.scene ?? null,
@@ -697,12 +598,12 @@ async function run(opts = {}) {
     }
   }
 
-  function drainCollected(write) {
+  function drainCollected(write, final = false) {
     // 先消化新行，再等已排队的写表任务落完
     return Promise.resolve()
-      .then(() => doDrain(write))
+      .then(() => doDrain(write, final))
       .then(() => writeChain)
-      .catch((e) => log('边读边写调度失败：' + ((e && e.message) || e)));
+      .catch((e) => { parseFailed = true; log('边读边写调度失败：' + ((e && e.message) || e)); });
   }
 
   let collectOk = false;
@@ -798,9 +699,21 @@ async function run(opts = {}) {
   }
 
   // 收尾：把采集脚本最后落的几行也处理掉（平时 watcher 已经边读边写了）
-  await drainCollected(!opts.dryRun && !opts.signal?.aborted);
+  await drainCollected(!opts.dryRun && !opts.signal?.aborted, true);
+  if (!opts.collectedFile) {
+    try {
+      const progressText = fs.readFileSync(outFile + '.progress', 'utf8');
+      const targetCount = Number(/TARGETS (\d+)/.exec(progressText)?.[1]);
+      const doneCount = progressText.split('\n').filter(line => line.startsWith('DONE ')).length;
+      if (Number.isFinite(targetCount) && doneCount < targetCount) {
+        collectOk = false;
+        log(`部分视频未采集完成（${doneCount}/${targetCount}），本轮不推进水位`);
+      }
+    } catch { /* 兼容不提供进度文件的离线采集结果 */ }
+  }
 
-  const cacheSaved = (opts.dryRun || opts.signal?.aborted) && perVideoAll.length > 0;
+  collectOk = collectOk && !parseFailed;
+  const cacheSaved = !!opts.dryRun || (!!opts.signal?.aborted && perVideoAll.length > 0);
   if (cacheSaved) {
     savePreview({ version: 1, profile, runStart, full, sinceMs, complete: collectOk,
       mediatrackUrl: projectUrl, appToken: conf.appToken, tableId: conf.tableId,
@@ -837,12 +750,13 @@ async function run(opts = {}) {
       //    新批注（更新时间落在本轮中途）下一轮会被「更新时间 >= 上次开始时间」重新捞到。
       //    小熊 2026-11-02 明确要求这个口径，别改成结束时间。
       if (collectOk && writtenTotal === freshTotal) {
-        writeConfig({ lastSyncAt: runStart }, profile);
+        writeConfig({ lastSyncAt: runStart }, profile, conf);
         log(`批注同步台账已记（${entry.mode}，写 ${writtenTotal} 条），水位推到 ${entry.at}`);
       } else {
         log('⚠️ 采集未成功收尾或写表未全部成功，水位不推进（下次仍从原水位捞，避免漏批注）');
       }
     } catch (e) {
+      if (e.code === 'SYNC_TARGET_CHANGED') throw e;
       log('⚠️ 同步台账记录失败：' + ((e && e.message) || e));
     }
   }
@@ -855,6 +769,7 @@ async function run(opts = {}) {
     fresh: freshTotal,
     written: writtenTotal,
     cacheComplete: collectOk,
+    failed: Math.max(0, freshTotal - writtenTotal),
     dryRun: !!opts.dryRun,
     full,
     sinceMs,

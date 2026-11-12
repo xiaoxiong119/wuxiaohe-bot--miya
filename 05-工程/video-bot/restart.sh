@@ -10,7 +10,7 @@ LABEL="com.wuxiaohe.videobot"
 
 if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
   echo "→ 已装开机自启，交给 launchd 重启…"
-  launchctl kickstart -k "gui/$(id -u)/$LABEL" && echo "✓ 已重启（$LABEL）"
+  launchctl kickstart -k "gui/$(id -u)/$LABEL" && echo "✓ 已重启（${LABEL}）"
   sleep 4
   if [ -f bot.pid ] && kill -0 "$(cat bot.pid)" 2>/dev/null; then
     echo "✓ 新进程在跑（pid $(cat bot.pid)）"

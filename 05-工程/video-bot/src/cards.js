@@ -11,7 +11,7 @@ const { getTarget } = require('./target');
  * 跟下面那个「项目素材目录」是两回：这里直接开成片存放的那个文件夹。
  */
 const TRIM_PREVIEW_URL =
-  'https://app.mediatrack.cn/projects/2109939996814217216/files?path=2112064548004433920';
+  'https://app.mediatrack.cn/projects/1000274100596785499/files?path=1000036094640317341';
 
 function trimPreviewUrl() {
   return TRIM_PREVIEW_URL;
@@ -45,7 +45,7 @@ function line(label, value) {
   return `**${label}**：${value == null || value === '' ? '—' : value}`;
 }
 
-/** 一审卡片（发给审片人 + 剪辑师） */
+/** 一审卡片（发给审片人） */
 function reviewCard(rec) {
   return {
     config: { wide_screen_mode: true, update_multi: true },
@@ -233,6 +233,7 @@ function trimCard(rec) {
  * 这样点「查看成片」既打开分秒帧，又能把剪辑进度改成「审片中」。
  */
 function finalCard(rec) {
+  if (rec.sceneMode && !rec.trimPreviewUrl) return settledCard(`${epTitle(rec)} · 精剪目录未配置`, ['精剪与终审功能暂不启用。目录配置完成后再提交精剪完成；请在任务表维护当前进度。'], 'grey');
   // 有的表（逆天萌兽3）的「剪辑进度」没有「审片中」这一档，
   // 卡片不能说「会把剪辑进度记成审片中」，只能照这张表实际能写的说。
   const canReviewing = !rec.cap || rec.cap.reviewing !== false;
@@ -320,13 +321,14 @@ function settledCard(title, resultLines, template) {
  * 别人用 /upmedia、/driveup 传完以后发给本人（陈俊杰）的回执卡：
  * 谁传的、哪一集、成功还是失败。
  */
-function uploadFeedbackCard({ outName, byOpenId, ok, episode, source, resultText }) {
-  const who = byOpenId ? `<at id="${byOpenId}"></at>` : '（本机投递箱）';
+function uploadFeedbackCard({ outName, byOpenId, ok, unknown, episode, source, resultText, inbox }) {
+  // 只有真的是投递箱来的才写「本机投递箱」；飞书来的但没取到操作人，写「未知操作人」
+  const who = byOpenId ? `<at id="${byOpenId}"></at>` : (inbox ? '（本机投递箱）' : '（未知操作人）');
   return {
     config: { wide_screen_mode: true },
     header: {
-      template: ok ? 'green' : 'red',
-      title: { tag: 'plain_text', content: `${ok ? '✅' : '❌'} 有人上传了 ${outName}` },
+      template: ok ? 'green' : unknown ? 'yellow' : 'red',
+      title: { tag: 'plain_text', content: `${ok ? '✅' : unknown ? '⚠️' : '❌'} 上传${unknown ? '待确认' : '结果'}：${outName}` },
     },
     elements: [
       {
@@ -338,7 +340,7 @@ function uploadFeedbackCard({ outName, byOpenId, ok, episode, source, resultText
             `**集数**：${episode == null ? '（文件名里没认出集数）' : episode + ' 集'}`,
             `**上传的文件**：${outName}`,
             `**来源**：${source || '未知'}`,
-            `**结果**：${ok ? '成功（已进分秒帧）' : '失败'}`,
+            `**结果**：${ok ? '成功（已进分秒帧）' : unknown ? '已提交，待人工核对' : '失败'}`,
             '',
             String(resultText || '').replace(/\n+$/, ''),
           ].join('\n'),

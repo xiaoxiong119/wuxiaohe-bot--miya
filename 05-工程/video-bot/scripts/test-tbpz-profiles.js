@@ -8,8 +8,13 @@ const { EventEmitter } = require('node:events');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tbpz-profiles-'));
 const sourceRoot = path.join(__dirname, '..');
 const configFile = path.join(root, 'config.json');
-const initial = JSON.parse(fs.readFileSync(path.join(sourceRoot, 'config.json')));
-initial.reviewSyncFineCut.lastSyncAt = 0;
+const initial = {
+  reviewSync: { mediatrackUrl: 'https://app.mediatrack.cn/projects/123/files', appToken: 'base-test', tableId: 'tblDefault', lastSyncAt: 1000 },
+  reviewSyncFineCut: { mediatrackUrl: 'https://app.mediatrack.cn/projects/456/files', appToken: 'base-test', tableId: 'tblFine', lastSyncAt: 0 },
+  reviewSyncNts3: { appToken: 'base-test', tableId: 'tblNts3', sceneMode: true, episodeRows: true },
+  reviewSyncNts3FineCut: { appToken: 'base-test', tableId: 'tblNts3Fine', sceneMode: true, episodeRows: true },
+  sceneProjects: [{ key: 'nts3', projectUrl: '' }],
+};
 fs.writeFileSync(configFile, JSON.stringify(initial));
 let collectorCode = 0;
 let holdCollector = false;
@@ -21,7 +26,7 @@ let existingRecords = [];
 let recordWrites = false;
 const calls = [];
 const spawns = [];
-const mockClient = { bitable: { v1: { appTableRecord: {
+const mockClient = { bitable: { v1: { appTableField: { list: async () => ({code:0,data:{items:[]}}) }, appTableRecord: {
   search: async ({path: target}) => {
     calls.push({op: 'search', ...target});
     return {data: {items: existingRecords, has_more: false}};
@@ -47,7 +52,7 @@ const context = {
   require: (name) => {
     if (name === './config') return {ROOT: root};
     if (name === './log') return {log: () => {}};
-    if (name === './feishu') return {getClient: () => mockClient};
+    if (name === './feishu') return {getClient: () => mockClient, withTimeout: p => p};
     if (name === 'child_process') return {spawn: (_cmd, args) => {
       spawns.push(args);
       const child = new EventEmitter();
@@ -75,7 +80,7 @@ async function main() {
   await sync.run({profile: 'fineCut', dryRun: true});
   assert.equal(spawns.at(-1)[1], initial.reviewSyncFineCut.mediatrackUrl);
   assert.ok(Number(spawns.at(-1)[4]) > 0);
-  assert.equal(calls.at(-1).table_id, 'tbl4vFgW19bZgl41');
+  assert.equal(calls.at(-1).table_id, 'tblFine');
   assert.equal(calls.filter(c => c.op === 'create').length, 0);
   assert.equal(sync.readConfig('fineCut').lastSyncAt, 0);
   const bootstrapSince = Number(spawns.at(-1)[4]);
@@ -83,7 +88,7 @@ async function main() {
   const written = await sync.run({profile: 'fineCut'});
   assert.equal(Number(spawns.at(-1)[4]), bootstrapSince, '首次增量起点应在重试间固定');
   assert.equal(written.written, 1);
-  assert.equal(calls.at(-1).table_id, 'tbl4vFgW19bZgl41');
+  assert.equal(calls.at(-1).table_id, 'tblFine');
   assert.ok(sync.readConfig('fineCut').lastSyncAt > 0);
   assert.equal(JSON.stringify(sync.readConfig()), defaultBefore);
   const watermark = sync.readConfig('fineCut').lastSyncAt;
@@ -102,7 +107,7 @@ async function main() {
   assert.equal(calls.at(-1).table_id, initial.reviewSync.tableId);
   assert.equal(JSON.stringify(sync.readConfig()), defaultBefore);
   const ledger = fs.readFileSync(path.join(root, 'tbpz-sync-log.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-  assert.ok(ledger.every(e => e.profile === 'fineCut' && e.tableId === 'tbl4vFgW19bZgl41'));
+  assert.ok(ledger.every(e => e.profile === 'fineCut' && e.tableId === 'tblFine'));
 
   // 缓存写入应零采集，复用结构化日期，重复调用通过查表去重。
   const cacheFile = path.join(root, 'review-preview/fineCut.json');
@@ -136,12 +141,14 @@ async function main() {
   assert.equal(spawns.length, spawnCount);
   assert.equal(JSON.stringify(sync.readConfig()), defaultBefore);
 
-  // 中断正在运行的采集：杀进程组、保存部分缓存、不查表、不写表、不推水位。
+  // 中断已经开始的采集：杀进程组、保存部分缓存、不再查表或写表、不推水位。
   collectorCode = 0; holdCollector = true;
   const cancelController = new AbortController();
-  const callCount = calls.length;
+  heldChild = null;
   const beforeCancel = JSON.stringify(sync.readConfig('fineCut'));
   const pending = sync.run({profile: 'fineCut', signal: cancelController.signal});
+  while (!heldChild) await new Promise(resolve => setImmediate(resolve));
+  const callCount = calls.length;
   cancelController.abort();
   const canceled = await pending;
   assert.equal(canceled.canceled, true);

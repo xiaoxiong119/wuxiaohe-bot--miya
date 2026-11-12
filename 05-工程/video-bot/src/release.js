@@ -1,19 +1,10 @@
-/**
- * 版本更新公告
- *
- * 盯着飞书开放平台上「已发布」的版本号（application/v6/.../app_versions）：
- *   - 版本号/版本 id 变了 → 把 releases.json 里攒着的改动说明（pending）归档成这一版的记录
- *   - 然后发一张简洁的公告卡到 config.json → release.chats 里的群
- *
- * 改动说明由乌乌在改完机器人后用 `node scripts/note.js "一句话改动"` 往 pending 里加，
- * 所以发版时群里看到的就是这一版真实做了什么，不用人再手写一遍。
- */
+const { writeJson } = require('./json-file');
+/** 版本查询、待公告条目与公告群配置。发送统一由 release-draft 的预览确认流程负责。 */
 const fs = require('fs');
 const path = require('path');
 const cfg = require('./config');
 const { log } = require('./log');
-const { getClient, sendInteractive, sendCardTo, sendText, sendTextTo, withTimeout } = require('./feishu');
-const C = require('./cards');
+const { getClient, withTimeout } = require('./feishu');
 
 const DB_FILE = path.join(cfg.ROOT, 'releases.json');
 const CONFIG_FILE = path.join(cfg.ROOT, 'config.json');
@@ -40,16 +31,12 @@ function loadDb() {
 
 function saveDb(db) {
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+    writeJson(DB_FILE, db);
     return true;
   } catch (e) {
     log('写 releases.json 失败：' + ((e && e.message) || e));
     return false;
   }
-}
-
-function ownerOpenId() {
-  return (cfg.INBOX && cfg.INBOX.notifyOpenId) || '';
 }
 
 /** 配置里的公告目标群 */
@@ -120,24 +107,6 @@ async function fetchLatest() {
   };
 }
 
-/** 把一条版本记录发成公告卡 */
-async function announce(rec, chatIds) {
-  const chats = (chatIds && chatIds.length ? chatIds : targetChats()).filter(Boolean);
-  const card = C.releaseCard(rec);
-  const sent = [];
-  for (const chatId of chats) {
-    const ok = await sendInteractive(chatId, card);
-    sent.push(`${chatId}:${ok ? 'ok' : 'fail'}`);
-  }
-  if (!chats.length) {
-    // 还没指定群：先发小熊本人，别让公告丢了
-    const me = ownerOpenId();
-    if (me) sent.push(`p2p:${(await sendCardTo(me, card)) ? 'ok' : 'fail'}`);
-  }
-  log(`版本公告 v${rec.version} 已发 → ${sent.join(' ') || '（没目标，也没发出去）'}`);
-  return { chats: chats.length, sent };
-}
-
 /**
  * 攒出「上次公告之后到现在」的全部改动（2026-10-28 小熊定的：
  * 公告要写上次发公告那个版本 → 最新版本之间的所有更新，不是只写两版之间）。
@@ -161,121 +130,6 @@ function collectItems(db) {
     changelogItems(base ? base.publishTime : 0).forEach(push);
   }
   return out;
-}
-
-/**
- * 手动发布公告（2026-10-28 小熊改的规矩：不再自动发，只有他私聊发命令才发）。
- *
- * 内容 = 上次真正发出公告之后到现在的所有改动（跨多少个版本都算），归到当前最新版本名下。
- * 一条都没攒下来就回「没有新东西」（除非 force）。
- */
-async function publish(opt) {
-  const o = opt || {};
-  const chats = (o.chats && o.chats.length ? o.chats : targetChats()).filter(Boolean);
-  const latest = await fetchLatest();
-  if (!latest) return { ok: false, reason: '没查到版本' };
-
-  const db = loadDb();
-  const base = db.lastAnnounced || null; // 上次真正发出去那一版（没有就是首次公告）
-  const items = collectItems(db);
-
-  if (!items.length && !o.force) {
-    return {
-      ok: true,
-      sent: false,
-      version: latest.version,
-      reason: base ? `v${base.version} 之后没记到新改动` : '还没有可公告的改动',
-    };
-  }
-
-  // 版本变了就新开一条记录，没变就挂在最新那条上
-  let rec = (db.history || [])[0];
-  if (!rec || rec.versionId !== latest.versionId) {
-    rec = {
-      version: latest.version,
-      versionId: latest.versionId,
-      publishTime: latest.publishTime,
-      remark: latest.remark,
-      recordedAt: Date.now(),
-      announced: false,
-      items: [],
-    };
-    db.history = [rec].concat(db.history || []).slice(0, 200);
-  }
-  if (!rec.items) rec.items = [];
-  items.forEach((t) => { if (!rec.items.includes(t)) rec.items.push(t); });
-  db.pending = [];
-  db.last = { version: latest.version, versionId: latest.versionId, publishTime: latest.publishTime };
-
-  const payload = {
-    version: rec.version,
-    remark: rec.remark,
-    publishTime: rec.publishTime,
-    items: rec.items.slice(),
-    sinceVersion: base ? base.version : '',
-  };
-
-  const r = await announce(payload, chats);
-  const anyOk = (r.sent || []).some((s) => String(s).endsWith('ok'));
-  if (anyOk) {
-    db.announcedItems = (db.announcedItems || []).concat(payload.items);
-    db.lastAnnounced = { version: rec.version, versionId: rec.versionId, publishTime: rec.publishTime, at: Date.now() };
-    rec.announced = true;
-    rec.announcedAt = Date.now();
-    rec.announcedTo = chats.slice();
-  }
-  saveDb(db);
-  log(`版本公告 v${rec.version}（${payload.items.length} 条改动${base ? '，含 v' + base.version + ' 之后全部' : '，首次公告'}）已手动发出`);
-  return { ok: true, sent: anyOk, version: rec.version, items: payload.items, result: r };
-}
-
-/**
- * 老接口保留：查一次版本并按需公告（现在默认不自动跑，别在定时任务里调）。
- * @param {object} opt force=强制把最新版本再播一次 | silent=只记录不发送（首次基线用）
- */
-async function sync(opt) {
-  const o = opt || {};
-  const latest = await fetchLatest();
-  if (!latest) return { ok: false, reason: '没查到版本' };
-
-  const db = loadDb();
-  const prev = db.last;
-  const changed = !prev || prev.versionId !== latest.versionId || prev.version !== latest.version;
-
-  if (!changed && !o.force) return { ok: true, changed: false, latest };
-
-  // 首次运行：只记基线，不往群里刷公告
-  const baseline = !prev && !o.force;
-  let items = (db.pending || []).map((p) => p.text);
-  if (!items.length) items = changelogItems(prev ? prev.publishTime : 0); // 忘了记就从 CHANGELOG 兜
-  // 以前几版已经播过的别再重复播一次
-  const used = new Set();
-  (db.history || []).forEach((h) => (h.items || []).forEach((t) => used.add(t)));
-  items = items.filter((t) => !used.has(t));
-  const rec = {
-    version: latest.version,
-    versionId: latest.versionId,
-    publishTime: latest.publishTime,
-    remark: latest.remark,
-    prevVersion: prev ? prev.version : '',
-    items,
-    recordedAt: Date.now(),
-    announced: false,
-  };
-
-  db.pending = [];
-  db.last = { version: latest.version, versionId: latest.versionId, publishTime: latest.publishTime };
-  db.history = [rec].concat(db.history || []).slice(0, 200);
-
-  let result = { ok: true, changed: true, baseline, latest, rec, sent: null };
-  if (!baseline && !o.silent) {
-    const r = await announce(rec, o.chats);
-    rec.announced = r.chats > 0 || (r.sent || []).some((s) => s.endsWith('ok'));
-    result.sent = r;
-  }
-  saveDb(db);
-  log(`版本记录：v${latest.version}（${items.length} 条改动）${baseline ? ' ← 首次基线，未公告' : ''}`);
-  return result;
 }
 
 /** /release：给一句人话的现状说明 */
@@ -322,7 +176,7 @@ function matchChats(chats, kw) {
 function setChats(chatIds) {
   const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
   raw.release = Object.assign({}, raw.release || {}, { enabled: true, chats: chatIds });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(raw, null, 2));
+  writeJson(CONFIG_FILE, raw);
   cfg.RELEASE = raw.release;
   return raw.release;
 }
@@ -364,6 +218,6 @@ function startScheduler() {
 }
 
 module.exports = {
-  loadDb, saveDb, addNote, changelogItems, fetchLatest, sync, publish, announce, status,
+  loadDb, saveDb, addNote, changelogItems, fetchLatest, status,
   listChats, matchChats, setChats, handleChatCommand, startScheduler, targetChats, collectItems,
 };

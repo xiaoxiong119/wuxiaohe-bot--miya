@@ -1,3 +1,4 @@
+const { writeJson } = require('./json-file');
 /**
  * 分秒帧上传目标：读 / 改 / 存
  *
@@ -17,17 +18,16 @@ function readConfig() {
 
 /** 从 URL 里抠出项目 id 和文件夹 id */
 function parseTarget(url) {
-  const s = String(url || '').trim();
-  if (!/^https?:\/\/app\.mediatrack\.cn\/projects\/\d+/i.test(s)) {
-    throw new Error('链接不对，要形如 https://app.mediatrack.cn/projects/<项目id>/files');
+  let u;
+  try { u = new URL(String(url || '').trim()); } catch { throw new Error('分秒帧目标链接无效'); }
+  const m = /^\/projects\/(\d+)\/files\/?$/.exec(u.pathname);
+  const folderId = u.searchParams.get('path') || '';
+  if (u.protocol !== 'https:' || u.hostname !== 'app.mediatrack.cn' || u.username || u.password || u.port ||
+      !m || (u.searchParams.has('path') && !/^\d+$/.test(folderId))) {
+    throw new Error('链接不对，要形如 https://app.mediatrack.cn/projects/<项目id>/files?path=<文件夹id>');
   }
-  const m = /\/projects\/(\d+)/.exec(s);
-  const p = /[?&]path=(\d+)/.exec(s);
-  return {
-    projectUrl: s,
-    projectId: m ? m[1] : '',
-    folderId: p ? p[1] : '',
-  };
+  return { projectUrl: u.href, projectId: m[1], folderId };
+
 }
 
 function getTarget() {
@@ -47,7 +47,7 @@ function setTarget(url) {
   const t = parseTarget(url);
   const cfg = readConfig();
   cfg.projectUrl = t.projectUrl;
-  fs.writeFileSync(CONFIG, JSON.stringify(cfg, null, 2) + '\n');
+  writeJson(CONFIG, cfg);
   return t;
 }
 

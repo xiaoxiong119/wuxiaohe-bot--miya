@@ -31,33 +31,25 @@ echo "  ⚠️ 手动项：装 Chrome → 登录分秒帧 → 装 bsk 浏览器�
 
 echo "== 4/5 launchd 开机自启 =="
 mkdir -p logs
-PLIST="$HOME/Library/LaunchAgents/com.feishu-videobot.plist"
-cat > "$PLIST" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.feishu-videobot</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>$BASE/start.sh</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-  </dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key>
-  <dict><key>Crashed</key><true/></dict>
-  <key>StandardOutPath</key><string>$BASE/logs/launchd.log</string>
-  <key>StandardErrorPath</key><string>$BASE/logs/launchd.log</string>
-</dict>
-</plist>
-EOF
-launchctl bootout "gui/$(id -u)/com.feishu-videobot" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST" && echo "✓ launchd 已装（开机自动起，崩溃自动拉起）"
+mkdir -p "$HOME/Library/LaunchAgents"
+PLIST="$HOME/Library/LaunchAgents/com.wuxiaohe.videobot.plist"
+python3 - "$BASE" "$PLIST" <<'PYPLIST'
+import sys, plistlib, os
+base, dest = sys.argv[1:]
+agent = {
+    'Label': 'com.wuxiaohe.videobot',
+    'ProgramArguments': ['/bin/bash', os.path.join(base, 'launchd-run.sh')],
+    'WorkingDirectory': base,
+    'RunAtLoad': True,
+    'KeepAlive': {'SuccessfulExit': False},
+    'ThrottleInterval': 15,
+    'StandardOutPath': os.path.join(base, 'logs', 'bot.log'),
+    'StandardErrorPath': os.path.join(base, 'logs', 'bot.log'),
+}
+with open(dest, 'wb') as stream:
+    plistlib.dump(agent, stream)
+PYPLIST
+echo "✓ 已生成启动项（尚未加载）。切换日先停旧机，再在此处运行 ./start.sh。"
 
 echo "== 5/5 Syncthing =="
 if command -v syncthing >/dev/null 2>&1 || [ -d /Applications/Syncthing.app ]; then

@@ -2,6 +2,7 @@ const assert = require('assert/strict');
 const path = require('path');
 const Module = require('module');
 const original = Module._load;
+const fixture = require('./test-fixtures').fixtures();
 let stored = '{}', sent, calls = [], messages = [];
 const row = { recordId: 'r1', project: '测试', episode: '71', stage: '已粗剪待一审', review: '', trimStage: '', reviewers: [{ id: 'u' }], editors: [{ id: 'e' }] };
 let current = { ...row };
@@ -11,6 +12,7 @@ Module._load = function(name, parent, main) {
   if (parent?.filename.endsWith('/batch.js')) {
     if (name === 'fs') return { existsSync: () => true, readFileSync: () => stored, writeFileSync: (p,s) => { stored = s; }, renameSync: () => {} };
     if (name === './flow') return fakeFlow;
+    if (name === './project-context') return fixture.pc;
     if (name === './config') return { BASE: {} };
     if (name === './feishu') return { sendTextTo: async(u,t) => messages.push(t), getClient: () => ({ bitable: { v1: { appTableField: { list: async () => ({ data: { items: [{ field_name: '修改意见', type: 1 }] } }) } } } }) };
   }

@@ -125,7 +125,7 @@ async function updatePreview(draft, messageId, card) {
   }
 }
 
-function recordAnnouncement(draft) {
+function recexample6112d87395(draft) {
   const db = release.loadDb();
   const latest = draft.latest;
   db.announcedItems = [...new Set([...(db.announcedItems || []), ...draft.sourceItems])];
@@ -192,7 +192,7 @@ async function handle({ action, operator, chatId, messageId }) {
         draft.delivered.push(target.id);
         save(draft);
       }
-      recordAnnouncement(draft);
+      recexample6112d87395(draft);
       draft.sent = true;
       save(draft);
       await updatePreview(draft, messageId, previewCard(draft));

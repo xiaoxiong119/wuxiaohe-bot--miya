@@ -21,7 +21,7 @@ function lockPath(root) {
 }
 
 function pidLooksLikeBot(pid) {
-  try { process.kill(pid, 0); } catch (e) { return false; }
+  try { process.kill(pid, 0); } catch (e) { return e.code === 'EPERM'; }
   try {
     const cmd = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
     if (!cmd.trim()) return false; // 进程刚好退了
@@ -56,20 +56,50 @@ function sleepSync(ms) {
  */
 function acquire(root, opts = {}) {
   const deadline = Date.now() + Math.max(0, Number(opts.waitMs) || 0);
-  let told = false;
+  const file = lockPath(root);
   for (;;) {
+    let fd;
+    try {
+      fd = fs.openSync(file, 'wx', 0o600);
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+      fs.closeSync(fd);
+      return { ok: true };
+    } catch (error) {
+      if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+      if (error.code !== 'EEXIST') {
+        log('单实例锁无法建立，停止启动：' + error.message);
+        return { ok: false, error: error.message };
+      }
+    }
     const pid = readLockedPid(root);
-    if (!pid || pid === process.pid || !pidLooksLikeBot(pid)) break;
+    if (pid === process.pid) return { ok: true };
+    let stat;
+    try { stat = fs.statSync(file); } catch (error) { if (error.code === 'ENOENT') continue; return { ok: false }; }
+    // 新锁可能刚创建还没写入 PID；不把这个短暂窗口当作陈旧锁。
+    const writing = !pid && Date.now() - stat.mtimeMs < 5000;
+    if (!writing && (!pid || !pidLooksLikeBot(pid))) {
+      // 陈旧锁的接管也必须互斥，不能让两个新进程同时删掉对方刚建立的锁。
+      const recovery = path.join(root, '.bot.lock-recovery');
+      let ownsRecovery = false;
+      try {
+        fs.mkdirSync(recovery, {mode:0o700});
+        ownsRecovery = true;
+        const current = fs.statSync(file);
+        if (current.ino !== stat.ino || readLockedPid(root) !== pid) continue;
+        fs.unlinkSync(file);
+      } catch (error) {
+        if (error.code === 'EEXIST') {
+          if (Date.now() >= deadline) return {ok:false, error:'另一进程正在接管旧锁；若目录长期残留，请先核对进程'};
+          sleepSync(100);
+        } else if (error.code !== 'ENOENT') return { ok: false, error: error.message };
+      } finally {
+        if (ownsRecovery) fs.rmdirSync(recovery);
+      }
+      continue;
+    }
     if (Date.now() >= deadline) return { ok: false, pid };
-    if (!told) { log(`单实例锁还被 pid ${pid} 占着，等它退出…`); told = true; }
-    sleepSync(1000);
+    sleepSync(Math.min(100, Math.max(1, deadline - Date.now())));
   }
-  try {
-    fs.writeFileSync(lockPath(root), JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
-  } catch (e) {
-    log('⚠️ 单实例锁写不了（不拦启动）：' + ((e && e.message) || e));
-  }
-  return { ok: true };
 }
 
 /** 只删自己的锁：别人接管之后不能把对方的锁删掉 */

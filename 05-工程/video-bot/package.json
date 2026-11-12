@@ -6,9 +6,13 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "upload": "node src/worker.js"
+    "upload": "node src/worker.js",
+    "test": "node scripts/test-offline.js"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.76.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

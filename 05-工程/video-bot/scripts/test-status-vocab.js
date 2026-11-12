@@ -10,7 +10,7 @@
  * 这里同时模拟两种表，确认两边都不报错、且萌兽3 不会去写一个不存在的选项。
  */
 const assert = require('node:assert/strict'), fs = require('fs'), path = require('path'), vm = require('vm');
-const root = path.join(__dirname, '..'), PC = require('../src/project-context');
+const root = path.join(__dirname, '..'), fixture = require('./test-fixtures').fixtures(), PC = fixture.pc;
 const C = require('../src/cards');
 const projects = PC.projects();
 const t2 = projects.find(p => p.key === 'legacy').base.tableId;
@@ -66,8 +66,9 @@ vm.runInNewContext(fs.readFileSync(path.join(root, 'src/flow.js'), 'utf8'), {
   process: { env: { FLOW_STATE_READONLY: '1' } },
   setTimeout, clearTimeout, setInterval, clearInterval,
   require: n => {
-    if (n === 'fs') return { readFileSync: p => { if (String(p).endsWith('config.json')) return '{}'; throw Error('no state'); } };
-    if (n === './config') return { ROOT: root, BASE: PC.base, FLOW: { enabled: true, tickMinutes: 1 } };
+    if (n === 'fs') return fs;
+    if (n === './project-context') return PC;
+    if (n === './config') return { ROOT: fixture.root, BASE: PC.base, FLOW: { enabled: true, tickMinutes: 1 } };
     if (n === './feishu') return { getClient: () => ({ bitable: { v1: { appTableRecord: records } }, im: { v1: { message: { create: async () => ({ code: 0 }) } } } }), withTimeout: p => p, sendTextTo: async () => {} };
     if (n === './log') return { log: () => {} };
     if (n === './status-vocab') return VOCAB;
@@ -75,7 +76,7 @@ vm.runInNewContext(fs.readFileSync(path.join(root, 'src/flow.js'), 'utf8'), {
   },
 });
 
-const click = (a, id) => mod.exports.handleCardAction({ a, r: id }, 'reviewer', '');
+const click = (a, id) => mod.exports.handleCardAction({ a, r: id }, ['trim_start','trim_done'].includes(a) ? 'editor' : a==='uploaded' ? 'artist' : 'reviewer', '');
 
 // 批量模块走同一份（vm 里的）flow：它 require('./flow') 时拿到的就是这里，
 // 这样批量待办看到的状态跟卡片流程完全一致
@@ -84,6 +85,9 @@ const Module = require('module'), originalLoad = Module._load;
 Module._load = function (name, parent, main) {
   if (parent && parent.filename && parent.filename.endsWith('/batch.js')) {
     if (name === './flow') return mod.exports;
+    if (name === './project-context') return PC;
+    if (name === './config') return {ROOT:fixture.root};
+    if (name === './feishu') return {getClient:()=>({bitable:{v1:{appTableField:{list:async()=>({code:0,data:{items:[{field_name:'修改位置',type:1}]}})}}}}),sendTextTo:async()=>true};
     if (name === 'fs') return { existsSync: () => true, readFileSync: () => batchStore, writeFileSync: (p, s) => { batchStore = s; }, renameSync: () => {} };
   }
   return originalLoad.apply(this, arguments);
@@ -160,5 +164,10 @@ mod.exports.sendCard = async (u, c) => { sentCards.push(c); return origSend(u, c
   assert(/精剪完成 → 通知审片人终审/.test(batchText), '批量卡的目标进度要说真话');
   assert(!/→ 剪辑中|→ 待审片/.test(batchText), '批量卡不该承诺写表里没有的档位');
 
+  fixture.config.sceneProjects[0].trimPreviewUrl='';
+  const writeCount=writes.length;
+  for(const a of ['trim_done','final_view','final_pass']) assert.equal((await flow.handleCardAction({a,r:'nts3c'},a==='trim_done'?'editor':'reviewer','')).toast.type,'error');
+  assert.equal(writes.length,writeCount,'精剪目录未配置时不推进终审');
+  assert(!JSON.stringify(C.finalCard(await flow.getRecord('nts3c'))).includes('final_view'),'未就绪卡不带终审回调');
   console.log('PASS: 状态词表适配——萌兽3 不写表也不报错、流程走通到已定剪；萌兽2 行为不变；终审卡文案按表说话');
 })().catch(e => { console.error(e); process.exitCode = 1; });

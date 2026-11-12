@@ -10,7 +10,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const execFile = require('util').promisify(require('child_process').execFile);
 
 const cfg = require('./config');
 const bitable = require('./bitable');
@@ -120,18 +120,17 @@ function checkDailySelfTest() {
 }
 
 /** bsk：上传分秒帧靠它驱动本机 Chrome */
-function checkBsk() {
+async function checkBsk() {
   try {
-    const r = spawnSync(path.join(process.env.HOME, '.local/bin/bsk'), ['status', '--json'], {
+    const r = await execFile(path.join(process.env.HOME, '.local/bin/bsk'), ['status', '--json'], {
       timeout: 8000,
       encoding: 'utf8',
       env: { ...process.env, BSK_AUTO_START: '0' },
     });
-    if (r.error) return { name: '浏览器服务 bsk', ok: false, detail: `跑不起来：${r.error.message}` };
-    if (r.status !== 0) return { name: '浏览器服务 bsk', ok: false, detail: `退出码 ${r.status}` };
     let j = null;
     try { j = JSON.parse(r.stdout); } catch (e) { /* 忽略 */ }
-    return { name: '浏览器服务 bsk', ok: true, detail: j && j.running === false ? '在跑（自己说没跑，奇怪）' : '在跑' };
+    if (!j) return { name: '浏览器服务 bsk', ok: false, detail: '状态返回无法解析' };
+    return { name: '浏览器服务 bsk', ok: j.running !== false, detail: j.running === false ? '未运行' : '在跑' };
   } catch (e) {
     return { name: '浏览器服务 bsk', ok: false, detail: (e && e.message) || String(e) };
   }
@@ -140,7 +139,7 @@ function checkBsk() {
 function checkTarget() {
   try {
     const t = target.getTarget();
-    if (!t || !t.projectUrl) return { name: '分秒帧目标', ok: false, detail: '还没配目标项目（/target <链接>）' };
+    if (!t || !t.projectUrl || !t.projectId) return { name: '分秒帧目标', ok: false, detail: '目标链接未配置或无效（/target <链接>）' };
     return { name: '分秒帧目标', ok: true, detail: t.projectUrl };
   } catch (e) {
     return { name: '分秒帧目标', ok: false, detail: (e && e.message) || String(e) };
@@ -164,7 +163,7 @@ function checkRuntime(meta) {
   const ev = (meta && meta.lastEventAt) || 0;
   const ageMin = ev ? Math.round((Date.now() - ev) / 60000) : -1;
   return {
-    name: '长连接在线',
+    name: '事件接收记录',
     ok: true,
     detail: ageMin < 0 ? '启动后还没收到任何事件（没人发消息也正常）' : `最近一次事件 ${ageMin} 分钟前`,
   };
@@ -176,8 +175,8 @@ function checkLastUpload(meta) {
   const ageMin = Math.round((Date.now() - u.at) / 60000);
   return {
     name: '最近一次上传',
-    ok: true,
-    detail: `${u.file}（${ageMin} 分钟前，${u.ok ? '成功' : '失败'}）`,
+    ok: !!u.ok,
+    detail: `${u.file}（${ageMin} 分钟前，${u.ok ? '成功' : u.unknown ? '待确认' : '失败'}）`,
   };
 }
 
@@ -187,7 +186,7 @@ async function probe(meta) {
   checks.push(await checkBitable());
   checks.push(checkFlowTick());
   checks.push(checkDailySelfTest());
-  checks.push(checkBsk());
+  checks.push(await checkBsk());
   checks.push(checkTarget());
   checks.push(checkDisk());
   checks.push(checkRuntime(meta));

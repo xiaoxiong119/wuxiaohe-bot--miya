@@ -1,3 +1,5 @@
+const pendingUploads = require('./pending-uploads').createStore(require('./config').ROOT);
+const { writeJson } = require('./json-file');
 /**
  * 乌小河 · 飞书视频 → 分秒帧 · 主进程
  *
@@ -23,7 +25,8 @@
 const Lark = require('@larksuiteoapi/node-sdk');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { createHash } = require('crypto');
+const { spawn, execFileSync } = require('child_process');
 
 const cfg = require('./config');
 const { log } = require('./log');
@@ -43,6 +46,7 @@ const { editField } = require('./bitable');
 const flow = require('./flow');
 const health = require('./health');
 const workday = require('./workday');
+const pointsReminder = require('./points-reminder');
 const release = require('./release');
 const releaseDraft = require('./release-draft');
 const botLock = require('./lock');
@@ -104,9 +108,11 @@ function feedbackToOwner(job, ok, resultText) {
       outName: job.outName,
       byOpenId,
       ok: !!ok,
+      unknown: !!job.uploadUnknown,
       episode: reviewsync.episodeOf(job.outName),
       source,
       resultText,
+      inbox: !!job.inboxItem,
     });
     sendCardTo(OWNER_OPEN_ID, card).then((sent) => {
       log(sent ? `已给本人回执：${job.outName} ${ok ? '成功' : '失败'}` : '⚠️ 给本人的回执没发出去');
@@ -123,17 +129,20 @@ function loadState() {
     const s = JSON.parse(fs.readFileSync(cfg.STATE_FILE, 'utf8'));
     if (!Array.isArray(s.handled)) s.handled = [];
     if (!Array.isArray(s.healthSent)) s.healthSent = [];
+    if (!Array.isArray(s.pointsSent)) s.pointsSent = [];
     // 最近成功的上传耗时，用来给排队的人估时间（中位数，最多留 20 条）
     if (!Array.isArray(s.durations)) s.durations = [];
+    // 每个上传名最近一次成功上传的大小与时间：同名同大小再投一次 = 重复投递，不再传
+    if (!s.recentUploads || typeof s.recentUploads !== 'object') s.recentUploads = {};
     return s;
   } catch (e) {
-    return { handled: [], healthSent: [], durations: [] };
+    return { handled: [], healthSent: [], pointsSent: [], durations: [], recentUploads: {} };
   }
 }
 
 function saveState() {
   try {
-    fs.writeFileSync(cfg.STATE_FILE, JSON.stringify(state, null, 2));
+    writeJson(cfg.STATE_FILE, state);
   } catch (e) {
     log('⚠️ 状态写盘失败：' + (e && e.message));
   }
@@ -192,7 +201,7 @@ function readRestartFlag() {
 
 function writeRestartFlag(obj) {
   try {
-    fs.writeFileSync(RESTART_FLAG, JSON.stringify(obj, null, 2));
+    writeJson(RESTART_FLAG, obj);
     return true;
   } catch (e) {
     log('写重启标记失败：' + ((e && e.message) || e));
@@ -227,7 +236,7 @@ function requestOwnerFix({ operator, chatId }) {
 
 /** 小熊点「重启机器人」 */
 function requestRestart({ operator, chatId, openId }) {
-  if (operator && OWNER_OPEN_ID && operator !== OWNER_OPEN_ID) {
+  if (!OWNER_OPEN_ID || operator !== OWNER_OPEN_ID) {
     return { toast: { type: 'error', content: '只有陈俊杰能重启机器人' } };
   }
   log(`收到重启指令（来自 ${operator || '?'}）`);
@@ -328,34 +337,42 @@ const pendingCommands = new Map();
 
 const MAX_PENDING_VIDEOS = 20;
 
+// 同一个群里的文件和等待命令按发送人隔离，避免给另一个人的视频改名。
+function pendingKey(chatId, chatType, senderId) {
+  return chatType === 'group' ? `${chatId}:${senderId || 'unknown'}` : chatId;
+}
+
 function pushVideo(att) {
-  const list = pendingVideos.get(att.chatId) || [];
+  const key = pendingKey(att.chatId, att.chatType, att.senderId);
+  const list = pendingVideos.get(key) || [];
   list.push(att);
   while (list.length > MAX_PENDING_VIDEOS) list.shift();
-  pendingVideos.set(att.chatId, list);
+  pendingVideos.set(key, list);
 }
 
 /** 失败的视频放回队首（网络抖动时用户重发 /upmedia 就能重试，不用重传文件） */
 function unshiftVideo(att) {
   if (!att || !att.chatId) return;
-  const list = pendingVideos.get(att.chatId) || [];
+  const key = pendingKey(att.chatId, att.chatType, att.senderId);
+  const list = pendingVideos.get(key) || [];
   list.unshift(att);
   while (list.length > MAX_PENDING_VIDEOS) list.pop();
-  pendingVideos.set(att.chatId, list);
+  pendingVideos.set(key, list);
 }
 
-function takeVideo(chatId) {
-  const list = pendingVideos.get(chatId) || [];
+function takeVideo(key) {
+  const list = pendingVideos.get(key) || [];
   const att = list.shift() || null;
-  if (list.length) pendingVideos.set(chatId, list);
-  else pendingVideos.delete(chatId);
+  if (list.length) pendingVideos.set(key, list);
+  else pendingVideos.delete(key);
   return att;
 }
 
-/** 用户输入的名字 → 分秒帧里的文件名（补扩展名、去非法字符） */
+/** 用户输入的名字 → 分秒帧里的文件名（补扩展名、去非法字符、去「-改」这类版本后缀） */
 function targetFileName(input, originalName) {
   const originalExt = (path.extname(originalName) || '.mp4').toLowerCase();
-  let base = safeName(String(input || '').trim());
+  // 和云盘那条路保持一致：/upmedia 93-改 也按 93 传，不然分秒帧会把条目名改成 93-改
+  let base = epname.stripRev(safeName(String(input || '').trim()));
   if (!base) return '';
   if (!path.extname(base)) base += originalExt;
   return base;
@@ -366,6 +383,8 @@ function targetFileName(input, originalName) {
 const queue = [];
 let busy = false;
 let currentJob = null;
+/** 正在跑上传的 worker 子进程（detached，退出时要手动收掉，否则会一直传下去） */
+let currentWorker = null;
 let lastOwnerId = ''; // 上一条是谁的，用来轮流（一个人连投五个，不能把别人全堵在后面）
 
 /**
@@ -420,7 +439,7 @@ function cleanupTemp(p) {
 const QUEUE_FILE = path.join(cfg.ROOT, '.queue.json');
 
 function serializable(job) {
-  return !!(job && job.att && job.att.messageId && !job.localPath && !job.att.driveToken);
+  return !!(job && job.att && job.att.messageId);
 }
 
 function saveQueue() {
@@ -429,9 +448,11 @@ function saveQueue() {
       .filter(serializable)
       .map((j) => ({
         att: j.att, outName: j.outName, uploadTarget: j.uploadTarget, projectKey: j.projectKey || '', cmdName: j.cmdName || '',
-        by: j.by || null, notifyOpenId: j.notifyOpenId || '', queuedAt: j.queuedAt || Date.now(),
+        sourceName: j.sourceName || '', by: j.by || null, notifyOpenId: j.notifyOpenId || '', queuedAt: j.queuedAt || Date.now(),
+        localPath:j.localPath, inboxItem:j.inboxItem, driveSourceToken:j.driveSourceToken,
+        confirmationRetry:!!j.confirmationRetry, started: !!j.started, taskBinding:j.taskBinding, confirmationId:j.confirmationId,
       }));
-    fs.writeFileSync(QUEUE_FILE, JSON.stringify(list, null, 1));
+    writeJson(QUEUE_FILE, list);
   } catch (e) {
     log('⚠️ 队列写盘失败：' + ((e && e.message) || e));
   }
@@ -442,6 +463,7 @@ function saveQueue() {
  * 传成功现在会自动删；失败/被重启打断的会留下来，攒久了占几个 G。
  */
 function cleanOldDownloads() {
+  if (currentJob || queue.length || pendingUploads.list().length) return; // 核对前保留上传源文件。
   const cutoff = Date.now() - 3 * 24 * 3600 * 1000;
   let n = 0;
   let bytes = 0;
@@ -495,23 +517,41 @@ function restoreQueue() {
   try { fs.unlinkSync(QUEUE_FILE); } catch (e) { /* 忽略 */ }
   if (!Array.isArray(list) || !list.length) return;
   // 超过 12 小时的不接（怕把昨天的老任务翻出来重传）
-  const fresh = list.filter((j) => j && j.att && j.outName && Date.now() - (j.queuedAt || 0) < 12 * 3600 * 1000);
-  const stale = list.length - fresh.length;
+  const alive = list.filter((j) => j && j.att && j.outName && Date.now() - (j.queuedAt || 0) < 12 * 3600 * 1000);
+  const stale = list.length - alive.length;
   if (stale > 0) log(`丢掉 ${stale} 个超过 12 小时的旧任务`);
+
+  // 2026-11-10：已经开始传的（动过浏览器）不自动重传。
+  // 那种重启大多发生在「文件其实已经传上去、只差收尾校验」的时刻，重传会把同一个文件顶成 v2 版本，
+  // 而分秒帧的版本得手动删。宁可让人看一眼，也不要错传一版。
+  const fresh = alive.filter((j) => !j.started && (!j.localPath || fs.existsSync(j.localPath)));
+  const interrupted = alive.filter((j) => j.started);
+  if (interrupted.length) {
+    log(`不自动重传 ${interrupted.length} 个重启时正在传的任务：${interrupted.map((j) => j.outName).join('、')}`);
+    interrupted.forEach((j) => {
+      if (!j.confirmationId) pendingUploads.begin(j);
+      pendingUploads.set(j.confirmationId, 'pending', '上传期间重启，需核对平台');
+      const chatId = j.att && j.att.chatId;
+      const text = `⏸ 传「${j.outName}」传到我重启了。它可能已经传上去了，也可能只传了一半——`
+        + '已进入管理台待确认队列。请核对分秒帧后，在管理台选择已上传或确认未上传再重试。';
+      const p = chatId ? sendText(chatId, text) : (j.notifyOpenId ? sendTextTo(j.notifyOpenId, text) : Promise.resolve(log(text)));
+      Promise.resolve(p).catch((e) => log('「正在传」提示发不出去：' + ((e && e.message) || e)));
+    });
+  }
   if (!fresh.length) return;
-  log(`恢复 ${fresh.length} 个重启前没传完的任务：${fresh.map((j) => j.outName).join('、')}`);
+  log(`恢复 ${fresh.length} 个重启前还没开始传的任务：${fresh.map((j) => j.outName).join('、')}`);
   fresh.forEach((j) => enqueue({ ...j, restored: true }));
 }
 
 /**
  * 当前上传回写的制作项目（config.json 每次现读，改完下一条视频生效，不用重启）。
  * 2026-11-03：《逆天萌兽2》归档，上传默认回写《逆天萌兽3》的多维表格。
- * 第三季的分秒帧链接还没给到 —— 上传目录一个字不动，仍走 config.projectUrl（/target 管的那个）。
+ * 上传目录使用当前 config.projectUrl，并按项目绑定校验。
  * 临时回退：把 config.json 的 uploadProject 改成 "legacy" 或删掉这一行。
  */
 function defaultUploadProject() {
   try {
-    const c = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf8'));
+    const c = JSON.parse(fs.readFileSync(path.join(cfg.ROOT, 'config.json'), 'utf8'));
     return c.uploadProject === 'nts3' ? 'nts3' : '';
   } catch (e) {
     log('默认上传项目读取失败，按 legacy 处理：' + (e && e.message));
@@ -519,9 +559,57 @@ function defaultUploadProject() {
   }
 }
 
+/**
+ * 上传总开关：config.json → upload.enabled（每次现读，改完不用重启）。
+ * 2026-11-09 小熊要求「暂时停用上传粗剪到分秒帧的功能」。
+ * 只有显式写成 false 才停；没配 / 写 true 都按正常跑，老配置不受影响。
+ * 想恢复：把 upload.enabled 改回 true（或删掉整个 upload 段）。
+ */
+function uploadEnabled() {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(cfg.ROOT, 'config.json'), 'utf8'));
+    return !(c.upload && c.upload.enabled === false);
+  } catch (e) {
+    log('上传开关读取失败，暂停接收上传：' + (e && e.message));
+    return false;
+  }
+}
+
+/** 上传暂停时统一回的话 —— 别让人以为文件丢了 */
+const UPLOAD_PAUSED_TEXT = '⏸ 上传分秒帧的功能已暂停，这次没传。\n文件还在（云盘/聊天记录里都在），等重新打开说一声，重发一次就行。';
+
+/** 投递箱暂停提示的日志节流（10 秒扫一次，不能每轮都写一行） */
+let lastInboxPauseLog = 0;
+
+/**
+ * 测试模式：config.json → upload.testMode（每次现读）。
+ * 打开后文件名不匹配「集数-场次」也照传，只上传、不回写表格、不发一审卡 ——
+ * 只用于验证上传链路（bsk/Chrome 登录态）通不通。日常必须关掉，
+ * 否则谁传错名字都不会被拦住。
+ */
+function uploadTestMode() {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(cfg.ROOT, 'config.json'), 'utf8'));
+    return !!(c.upload && c.upload.testMode);
+  } catch (e) {
+    return false;
+  }
+}
+
 function enqueue(job) {
+  if (!job.onDone && job.driveSourceToken) job.onDone = ok => drivefolder.finish(job.driveSourceToken, job.localPath, ok);
+  job.outName = safeName(job.outName);
+  // 兜底：不管从哪个口进来（命令 / 云盘链接 / 投递箱 / 重启恢复），暂停就一条都不传
+  if (!uploadEnabled()) {
+    log(`上传已暂停，跳过 ${job.outName || (job.att && job.att.fileName) || '(未命名)'}`);
+    Promise.resolve(reply(job, UPLOAD_PAUSED_TEXT)).catch((e) => log('暂停提示发不出去：' + ((e && e.message) || e)));
+    if (job.inboxItem && inbox.clearBusy) inbox.clearBusy(job.inboxItem);
+    if (job.onDone && !job.confirmationRetry) { try { job.onDone(false); } catch (e) { /* 忽略 */ } }
+    return false;
+  }
   if (!job.projectKey) job.projectKey = defaultUploadProject();
   if (!job.uploadTarget) job.uploadTarget = target.getTarget();
+  if (!job.confirmationRetry && pendingUploads.blocks(job)) { log('上传源正在等待人工确认，禁止重复提交：' + job.outName); return false; }
   // 同一条源文件重复投（连着发三次 /upmedia 73 + 两次文件）→ 别再排一遍。
   // 2026-10-28 踩到：三份 56 MB 下载互相打断，一个都没传成。
   // 但「122-改1 / 122-改2 都按 122 传」是两个不同文件，得按顺序都传 —— 所以按来源比，
@@ -529,13 +617,14 @@ function enqueue(job) {
   if (!job.retried) {
     const srcKey = (j) => (j && j.att && j.att.messageId) || '';
     const dup = [currentJob].concat(queue).find((j) =>
-      j && j !== job && j.outName === job.outName && srcKey(j) && srcKey(j) === srcKey(job));
+      j && j !== job && uploadKey(j.outName, j.uploadTarget, j.projectKey) === uploadKey(job.outName, job.uploadTarget, job.projectKey) &&
+      srcKey(j) && srcKey(j) === srcKey(job));
     if (dup) {
       const where = dup === currentJob ? '正在传' : '已经在排队';
       log(`跳过重复入队 ${job.outName}：${where}`);
       reply(job, `「${job.outName}」${where}，这次不用重复发；传完我直接回结果。`);
       if (job.inboxItem && inbox.clearBusy) inbox.clearBusy(job.inboxItem);
-      if (job.onDone) job.onDone(true);
+      if (job.onDone) job.onDone(false);
       return false;
     }
   }
@@ -563,20 +652,50 @@ async function reply(job, text) {
   return false;
 }
 
+/**
+ * 同项目同目录、同名、同内容且时间很近时，按重复投递处理。
+ * 2026-11-10 踩坑：95.mp4 在 17:17 已经传成功（列表 4→5），17:21 又收到一次完整的
+ * 「/upmedia 95 + 同一份 78.41 MB 视频」，机器人照传，第二次走「上传版本」把 v1 顶成 v2。
+ * 用 SHA-256 核对文件内容，避免把大小相同的新版本误拦。
+ * 想强制重传：文件名带「改」（95-改.mp4，同事本来就习惯这么写）或等窗口过期。
+ */
+const DUP_WINDOW_MIN = Math.max(0, Number(cfg.UPLOAD?.dupWindowMinutes ?? 30));
+
+function uploadKey(outName, uploadTarget, projectKey) {
+  return JSON.stringify([projectKey || '', uploadTarget?.projectId || '', uploadTarget?.folderId || '', outName]);
+}
+
+function dupUpload(outName, size, srcName, uploadTarget, projectKey, sha256) {
+  if (!DUP_WINDOW_MIN || !size) return null;
+  const prev = (state.recentUploads || {})[uploadKey(outName, uploadTarget, projectKey)];
+  if (!prev || !prev.size || !sha256 || prev.sha256 !== sha256) return null;
+  const age = Date.now() - (prev.at || 0);
+  if (age < 0 || age > DUP_WINDOW_MIN * 60 * 1000) return null;
+  if (prev.size !== size) return null;
+  if (epname.isRev(srcName)) return null; // 明说是改版，放行
+  return { prev, age };
+}
+
 async function pump() {
   if (busy) return;
   const job = takeNext();
   if (!job) return;
   busy = true;
   currentJob = job;
+  // 标记「已经开始动浏览器了」，并立刻落盘。
+  // 2026-11-10 踩坑：正在传的时候重启，重启后队列把这个任务当「没传完」重传了一遍，
+  // 而分秒帧那边上一次其实已经落库，于是干净的文件被顶成 v2。开始过的任务重启后一律不自动重传。
+  job.started = true;
+  saveQueue();
   const startedAt = Date.now();
   const waited = job.queuedAt ? Math.round((startedAt - job.queuedAt) / 1000) : 0;
   if (waited > 10) log(`${job.outName} 排队 ${waited} 秒后开始`);
   try {
     await runJob(job);
-    feedbackToOwner(job, job.uploadOk !== false, job.resultText);
+    if (!job.skipped) feedbackToOwner(job, job.uploadOk !== false, job.resultText);
   } catch (e) {
     const msg = (e && e.message) || '';
+    if (job.confirmationId && pendingUploads.list().some(r=>r.id===job.confirmationId && r.status==='verified')) job.uploadUnknown=true;
     const netDown = /下载失败/.test(msg) &&
       /connect failed|ECONNREFUSED|ETIMEDOUT|socket hang up|ECONNRESET|getaddrinfo/i.test(msg);
     // 飞书消息下载遇到网络抖动：自动重试一次（文件不用重传）
@@ -586,6 +705,10 @@ async function pump() {
       setTimeout(() => {
         enqueue({ ...job, retried: true });
       }, 45000);
+    } else if (job.uploadUnknown) {
+      const text = `⚠️ ${job.outName} 上传结果待确认：${msg}。已挂起，请在管理台核对后处理。`;
+      if(job.inboxItem) inbox.clearBusy(job.inboxItem);
+      await reply(job,text); feedbackToOwner(job,false,text);
     } else {
       log(`处理失败 ${job.outName}：${msg}`);
       try { require('./admin-runtime').failed(job, msg); } catch (e) { log('失败记录保存失败：' + e.message); }
@@ -595,7 +718,7 @@ async function pump() {
       if (netDown && job.att && job.att.messageId) {
         unshiftVideo(job.att);
         if (job.cmdName && job.att.chatId) {
-          pendingCommands.set(job.att.chatId, { name: job.cmdName, projectKey: job.projectKey, uploadTarget: job.uploadTarget, expiresAt: Date.now() + WAIT_SECONDS * 1000 });
+          pendingCommands.set(pendingKey(job.att.chatId, job.att.chatType, job.att.senderId), { name: job.cmdName, projectKey: job.projectKey, uploadTarget: job.uploadTarget, by: job.by || null, expiresAt: Date.now() + WAIT_SECONDS * 1000 });
         }
         text += '\n\n这条视频我还留着，直接重发一次 /upmedia 就会重试（文件不用重传）。';
       }
@@ -627,6 +750,37 @@ async function pump() {
 // 正常 500 MB 以内几分钟就完；真卡住（bsk 掉线、页面挂了）45 分钟也够判死刑了。
 const UPLOAD_TIMEOUT_MS = Math.max(5, Number(process.env.UPLOAD_TIMEOUT_MIN || 45)) * 60 * 1000;
 
+/** 收掉当前上传子进程（连它开的那组 bsk 一起），退出/重启时必须调用 */
+function killWorkerGroup(sig = 'SIGKILL') {
+  const pid = currentWorker && currentWorker.pid;
+  if (!pid) return;
+  // detached 起的是独立进程组，用负数 pid 杀整组，bsk 子进程才不会挂在那儿占着浏览器
+  try { process.kill(-pid, sig); } catch (e) { /* 已经退了 */ }
+  try { process.kill(pid, sig); } catch (e) { /* 已经退了 */ }
+  log(`已收掉上传子进程（组 ${pid}）`);
+  currentWorker = null;
+}
+
+/**
+ * 启动时清掉上一次进程遗留的 worker。
+ * worker 是 detached 起的，父进程被 kill 时它不会跟着死，会接着在浏览器里传——
+ * 新进程又从队列里恢复同一个任务，于是两个窗口同时往同一个条目传，直接顶成 v2（2026-11-10 踩到）。
+ */
+function killOrphanWorkers() {
+  const marker = path.join(__dirname, 'worker.js');
+  let pids = [];
+  try {
+    const out = execFileSync('/usr/bin/pgrep', ['-f', marker], { encoding: 'utf8' }) || '';
+    pids = out.split('\n').map((s) => s.trim()).filter(Boolean).map(Number)
+      .filter((n) => n && n !== process.pid);
+  } catch (e) {
+    return; // pgrep 没找到时退出码 1，正常
+  }
+  if (!pids.length) return;
+  pids.forEach((pid) => { try { process.kill(pid, 'SIGKILL'); } catch (e) { /* 已经退了 */ } });
+  log(`清掉上次遗留的 ${pids.length} 个上传子进程：${pids.join('、')}`);
+}
+
 /** 起子进程跑上传，从 stdout 里捞最后一行 RESULT_JSON */
 function runWorker(filePath, uploadTarget) {
   return new Promise((resolve, reject) => {
@@ -637,6 +791,10 @@ function runWorker(filePath, uploadTarget) {
       // 不然 worker 死了、bsk 还挂在浏览器上占着会话
       detached: true,
     });
+    // 记下当前 worker：主进程收到退出信号时得把它一起收掉。
+    // detached 的进程不会跟着父进程死，2026-11-10 就是这样出现「重启后两个窗口同时传同一个文件」。
+    currentWorker = child;
+    child.on('close', () => { if (currentWorker === child) currentWorker = null; });
 
     let out = '';
     let timedOut = false;
@@ -688,12 +846,23 @@ async function runJob(job) {
   const taskId = taskIdentity.parse(outName);
   const candidates = (await flow.fetchAllRecords()).filter(r => r.projectKey === project.key);
   const taskRecord = taskId && project.uploadKind !== 'fine' ? taskIdentity.select(candidates, taskId) : null;
-  if (project.sceneMode && project.uploadKind !== 'fine' && !taskRecord) throw new Error('场次项目必须使用明确的集数-场次文件名');
+  const testMode = !!(job.testMode || uploadTestMode());
+  if (project.sceneMode && project.uploadKind !== 'fine' && !taskRecord) {
+    if (!testMode) throw new Error('场次项目必须使用明确的集数-场次文件名');
+    log(`测试模式：${outName} 没匹配到集数-场次任务，只上传、不回写表格`);
+  }
   job.taskBinding = taskRecord ? { recordId: taskRecord.recordId, projectKey: project.key,
     signature: JSON.stringify([taskRecord.episode, taskRecord.scene, taskRecord.stage, taskRecord.review, taskRecord.trimStage]), label: taskIdentity.display(taskRecord) } : null;
   // 落盘就用目标名（worker 按磁盘文件名认分秒帧条目），但目录每次独立，
   // 免得两个人同一集同时下载时写同一个文件
-  const destPath = job.localPath || taskTempPath(outName, att.messageId || att.driveToken);
+  let destPath = job.localPath || taskTempPath(outName, att.messageId || att.driveToken);
+  let localCopy = false;
+  if (job.localPath && path.basename(job.localPath) !== outName) {
+    destPath = taskTempPath(outName, att.messageId);
+    fs.mkdirSync(path.dirname(destPath), {recursive:true});
+    await fs.promises.copyFile(job.localPath, destPath);
+    localCopy = true;
+  }
   if (att.driveToken) {
     await drive.download(att.driveToken, destPath);
   } else if (!job.localPath) {
@@ -710,9 +879,54 @@ async function runJob(job) {
     });
   }
 
+  // 同名同大小、短时间内已经传过 → 认成重复投递，不传第二遍（否则会把版本顶成 v2）
+  let fileSize = 0;
+  try { fileSize = fs.statSync(destPath).size; } catch (e) { /* 拿不到就跳过这道检查 */ }
+  const hash = createHash('sha256');
+  for await (const chunk of fs.createReadStream(destPath)) hash.update(chunk);
+  const sha256 = hash.digest('hex');
+  const dupHit = job.retried ? null : dupUpload(outName, fileSize, job.cmdName || job.sourceName || (att && att.fileName), job.uploadTarget, job.projectKey, sha256);
+  if (dupHit) {
+    const when = new Date(dupHit.prev.at).toLocaleTimeString('zh-CN', { hour12: false });
+    const mb = (fileSize / 1024 / 1024).toFixed(2);
+    const text = `⏭ ${outName} 这次没传：${when} 刚传过一份，文件大小完全一样（${mb} MB），我按重复处理，免得把版本顶成 v2。\n`
+      + `确实是新版本：文件名加个「改」再发（例：${path.basename(outName, path.extname(outName))}-改${path.extname(outName)}），或等 ${DUP_WINDOW_MIN} 分钟后再发。`;
+    log(`跳过重复上传 ${outName}：${when} 已传过同样大小（${mb} MB）`);
+    job.skipped = true;
+    job.uploadOk = false;
+    job.resultText = text;
+    if (!job.localPath || localCopy) cleanupTemp(destPath);
+    await reply(job, text);
+    if (job.inboxItem) {
+      inbox.markDone(job.inboxItem); // 同一份文件已经传过了，别留在箱里反复扫
+      inbox.clearBusy(job.inboxItem);
+    }
+    if (job.onDone) await job.onDone(true);
+    return;
+  }
+
   log(`开始上传 ${att.fileName} → ${outName}`);
-  const res = await runWorker(destPath, job.uploadTarget);
-  lastUpload = { at: Date.now(), file: outName, ok: !!res.ok };
+  pendingUploads.begin(job, destPath); // 必须先持久化，再动浏览器。
+  saveQueue();
+  let res;
+  try { res = await runWorker(destPath, job.uploadTarget); }
+  catch (e) { job.uploadUnknown=true; pendingUploads.set(job.confirmationId, 'pending', e.message); throw e; }
+  job.uploadUnknown = !res.ok && (!res.error || res.unknown === true);
+  if (!res.ok && !job.uploadUnknown) require('./admin-runtime').failed(job, res.error || '上传失败');
+  pendingUploads.set(job.confirmationId, job.uploadUnknown ? 'pending' : res.ok ? 'verified' : 'failed', res.error || res.url);
+  lastUpload = { at: Date.now(), file: outName, ok: !!res.ok, unknown: job.uploadUnknown };
+
+  // 传成功就记下「这个名、这个大小、几点传的」，下次同名同大小直接跳过
+  if (res.ok && fileSize) {
+    if (!state.recentUploads) state.recentUploads = {};
+    state.recentUploads[uploadKey(outName, job.uploadTarget, job.projectKey)] = { size: fileSize, sha256, at: Date.now(), version: res.version || '', mode: res.mode || '' };
+    const names = Object.keys(state.recentUploads);
+    if (names.length > 60) {
+      names.sort((a, b) => (state.recentUploads[a].at || 0) - (state.recentUploads[b].at || 0))
+        .slice(0, names.length - 40).forEach((n) => delete state.recentUploads[n]);
+    }
+    saveState();
+  }
 
   let text;
   // 云盘原名和上传名不一样（122-改.mov → 122.mov）时，回执里点一句，省得以为传错了
@@ -724,23 +938,32 @@ async function runJob(job) {
     text += `\n${res.url}`;
   } else if (res.ok) {
     text = `✅ 已上传分秒帧：${outName}\n列表 ${res.countBefore} → ${res.countAfter} 项\n${res.url}`;
+  } else if (job.uploadUnknown) {
+    text = `⚠️ ${outName} 上传结果待确认，已进入管理台核对队列；不会自动重传。${res.error || ''}\n${res.url || ''}`;
   } else if (res.error) {
     text = `❌ ${outName} 上传失败：${res.error}`;
+  } else if (res.mode === 'version') {
+    text = `⚠️ ${outName} 新版本已提交，但未确认版本号增加，请到分秒帧核对\n${res.url}`;
   } else {
     text = `⚠️ ${outName} 已提交，但列表数量没变（${res.countBefore} → ${res.countAfter}），请到分秒帧确认\n${res.url}`;
   }
+  if (!job.taskBinding && testMode) text += '\n（测试模式：文件名没匹配「集数-场次」，只传了文件，没回写表格）';
   log(text);
   job.uploadOk = !!res.ok;
   job.resultText = text;
 
   // 传成功了就把下载下来的临时文件删掉（2026-10-28：以前 /upmedia 传完不删，
   // downloads/ 里越攒越多，今天一次就积了 300 多 MB）。失败留着，方便排查。
-  if (res.ok && !job.localPath) {
+  if (res.ok && (!job.localPath || localCopy)) {
     cleanupTemp(destPath);
     log(`已清理临时文件 ${outName}`);
   }
   await reply(job, text);
 
+  if (job.uploadUnknown) {
+    if (job.inboxItem) inbox.clearBusy(job.inboxItem);
+    return; // 原文件保留；不走 failed 或释放云盘源，管理台核对后处理。
+  }
   if (job.inboxItem) {
     if (res.ok) inbox.markDone(job.inboxItem);
     else inbox.markFailed(job.inboxItem);
@@ -749,19 +972,23 @@ async function runJob(job) {
   if (job.onDone) await job.onDone(res.ok);
 
   // 上传成功后：文件名带集数的，把该集素材生成进展记为已粗剪待一审（制作师 /upmedia、/driveup 都走这里）
-  if (res.ok) await markEpisodeReady(job.chatId || (job.att && job.att.chatId), outName, job.taskBinding);
+  if (res.ok) {
+    await markEpisodeReady(job.chatId || (job.att && job.att.chatId), outName, job.taskBinding, true);
+    pendingUploads.set(job.confirmationId, 'completed', '平台已确认上传，收尾完成');
+  }
 }
 
 /**
  * 上传成功回写多维表格：按文件名里的集数找记录，素材生成进展 → 已粗剪待一审，并重发一审卡片。
  * 已经在已完成并上传/已定剪的集不回退（那属于重传终稿版本）。
  */
-async function markEpisodeReady(chatId, outName, binding) {
+async function markEpisodeReady(chatId, outName, binding, strict = false) {
   try {
     if (!binding) return;
     const rec = await flow.getRecord(binding.recordId);
     const ep = binding.label;
     if (JSON.stringify([rec.episode, rec.scene, rec.stage, rec.review, rec.trimStage]) !== binding.signature) {
+      if (strict) throw new Error('任务状态已变化，未覆盖。请先核对任务表');
       if (chatId) sendText(chatId, `视频已上传，但 ${ep} 的表格状态在上传期间发生变化，本次不覆盖，请核对任务。`);
       return;
     }
@@ -777,14 +1004,16 @@ async function markEpisodeReady(chatId, outName, binding) {
     }
     // 不管状态改没改，都补发/确保一审卡片在（防重复由 flowState 去重）
     const reviewSent = await flow.autoReview(rec, true);
-    log(`上传回写：${ep} 集已标待一审${reviewSent ? '，一审卡片已成功发给审片人' : '，一审卡片没发出去'}`);
+    const delivered = flow.deliveredPeople(rec.reviewers);
+    log(`上传回写：${ep} 集已标待一审，一审通知送达 ${delivered.length}/${rec.reviewers.length} 人`);
     // 真发出去了才告诉制作师「审片人已经收到了」（2026-10-28 小熊要求）
-    if (reviewSent && chatId) {
-      const names = (rec.reviewers || []).filter((p) => p && p.id)
+    if (delivered.length && chatId) {
+      const names = delivered.filter((p) => p && p.id)
         .map((p) => `${p.name || '（未填名字）'}（审片人）`).join('、');
-      if (names) sendText(chatId, `📨 已通知到 ${names}，审片人收到了这一集的审阅卡片。`);
+      if (names) sendText(chatId, `📨 已通知到 ${names}。${reviewSent ? '' : '其余人员的送达状态请查看管理台通知台账。'}`);
     }
   } catch (e) {
+    if (strict) throw e;
     log('上传回写失败：' + ((e && e.message) || e));
     if (chatId) sendText(chatId, '视频上传后回写失败，请核对任务：' + e.message);
   }
@@ -844,10 +1073,13 @@ function onBaseCommand(text, msg) {
 }
 
 /** /upmedia 67 —— 命令入口 */
-function onCommand(cmd, msg, operatorId) {
+async function onCommand(cmd, msg, operatorId) {
   const chatId = msg.chat_id;
   const chatType = msg.chat_type || 'p2p';
+  const key = pendingKey(chatId, chatType, operatorId);
   if (!chatAllowed(chatType, chatId)) return;
+
+  if (!uploadEnabled()) { sendText(chatId, UPLOAD_PAUSED_TEXT); return; }
 
   if (!cmd.name) {
     sendText(chatId, `用法：${COMMAND} 名字\n比如 ${COMMAND} 67 —— 会把最新那条视频传成分秒帧里的「67.mp4」。`);
@@ -876,27 +1108,28 @@ function onCommand(cmd, msg, operatorId) {
       driveToken: inlineLink.token,
     };
     const outName = targetFileName(clean, driveAtt.fileName);
-    sendText(chatId, `好，从云盘拉这个文件，传成「${outName}」，开始。`);
+    await sendText(chatId, `好，从云盘拉这个文件，传成「${outName}」，开始。`);
     enqueue({ att: driveAtt, outName, projectKey: cmd.projectKey, uploadTarget: cmd.uploadTarget, by: { openId: operatorId } });
     return;
   }
 
-  const att = takeVideo(chatId);
+  const att = takeVideo(key);
   if (att) {
     const outName = targetFileName(cmd.name, att.fileName);
-    pendingCommands.delete(chatId);
-    sendText(chatId, `好，把 ${att.fileName} 传成「${outName}」，开始。`);
+    pendingCommands.delete(key);
+    // await 一下：不 await 的话失败回执可能比「开始」先到，看着像没开工就报错了（2026-11-10 踩到）
+    await sendText(chatId, `好，把 ${att.fileName} 传成「${outName}」，开始。`);
     enqueue({ att, outName, projectKey: cmd.projectKey, uploadTarget: cmd.uploadTarget, cmdName: cmd.name, by: { openId: operatorId } });
     return;
   }
 
   // 命令先到：留个坑，等视频
-  pendingCommands.set(chatId, { name: cmd.name, projectKey: cmd.projectKey, uploadTarget: cmd.uploadTarget, expiresAt: Date.now() + WAIT_SECONDS * 1000 });
+  pendingCommands.set(key, { name: cmd.name, projectKey: cmd.projectKey, uploadTarget: cmd.uploadTarget, by: { openId: operatorId }, expiresAt: Date.now() + WAIT_SECONDS * 1000 });
   sendText(chatId, `好，把视频发到聊天框，我传成「${targetFileName(cmd.name, '.mp4')}」。（${Math.round(WAIT_SECONDS / 60)} 分钟内有效）\n如果文件在云盘收件夹里，改用：/driveup ${cmd.name}`);
 }
 
 /** 视频消息入口 */
-function onVideo(att) {
+async function onVideo(att) {
   if (!chatAllowed(att.chatType, att.chatId)) return;
 
   // 只处理视频扩展名
@@ -907,28 +1140,23 @@ function onVideo(att) {
     return;
   }
 
-  // 去重：长连接超时会重推同一事件
-  if (state.handled.includes(att.messageId)) {
-    log(`重复推送，已跳过 ${att.messageId}`);
-    return;
-  }
-  state.handled.push(att.messageId);
-  if (state.handled.length > 500) state.handled = state.handled.slice(-500);
-  saveState();
-
   // 命令先到 → 直接开工
-  const pendingCmd = pendingCommands.get(att.chatId);
+  const key = pendingKey(att.chatId, att.chatType, att.senderId);
+  const pendingCmd = pendingCommands.get(key);
   if (pendingCmd && pendingCmd.expiresAt > Date.now()) {
-    pendingCommands.delete(att.chatId);
+    pendingCommands.delete(key);
     const outName = targetFileName(pendingCmd.name, att.fileName);
-    sendText(att.chatId, `收到 ${att.fileName}，传成「${outName}」，开始。`);
-    enqueue({ att, outName, projectKey: pendingCmd.projectKey, uploadTarget: pendingCmd.uploadTarget, cmdName: pendingCmd.name });
+    await sendText(att.chatId, `收到 ${att.fileName}，传成「${outName}」，开始。`);
+    // 操作人要从缓存里带下来：漏了的话回执卡会显示「（本机投递箱）/ 本机未知」（2026-11-10 93.mp4 就是这样）
+    enqueue({ att, outName, projectKey: pendingCmd.projectKey, uploadTarget: pendingCmd.uploadTarget, cmdName: pendingCmd.name, by: pendingCmd.by || null });
     return;
   }
 
   // 否则缓存，等命令
   pushVideo(att);
-  if (cfg.REPLY_ON_RECEIVE) {
+  if (!uploadEnabled()) {
+    sendText(att.chatId, UPLOAD_PAUSED_TEXT);
+  } else if (cfg.REPLY_ON_RECEIVE) {
     sendText(att.chatId, `收到 ${att.fileName}。\n要传的话发：${COMMAND} 名字（例：${COMMAND} 67）`);
   }
 }
@@ -944,6 +1172,13 @@ function onMessage(data) {
   if (sender && sender.sender_type && sender.sender_type !== 'user') return;
 
   const operatorId = (sender && sender.sender_id && sender.sender_id.open_id) || '';
+
+  if (!chatAllowed(msg.chat_type || 'p2p', msg.chat_id)) return;
+  // 所有消息统一去重，命令重投也不会重复改表、下载或上传。
+  if (!msg.message_id || state.handled.includes(msg.message_id)) return;
+  state.handled.push(msg.message_id);
+  if (state.handled.length > 500) state.handled = state.handled.slice(-500);
+  saveState();
 
   const text = textContent(msg);
 
@@ -977,7 +1212,7 @@ function onMessage(data) {
       const project = c.sceneProjects.find(p => p.key === 'nts3');
       project[sceneDir[1] === '粗剪' ? 'projectUrl' : 'trimPreviewUrl'] = t.projectUrl;
       c[sceneDir[1] === '粗剪' ? 'reviewSyncNts3' : 'reviewSyncNts3FineCut'].mediatrackUrl = t.projectUrl;
-      fs.writeFileSync(f, JSON.stringify(c, null, 2) + '\n');
+      writeJson(f, c);
       sendText(msg.chat_id, '已绑定《逆天萌兽3》' + sceneDir[1] + '目录。上传前用 /target 选择相应目录。');
     } catch (e) { sendText(msg.chat_id, '目录绑定失败：' + e.message); }
     return;
@@ -1039,8 +1274,9 @@ function onMessage(data) {
     const setMt = /^分秒帧\s+(.+)$/.exec(arg);
     if (setMt) {
       const url = setMt[1].trim();
-      if (!/mediatrack\.cn\/projects\/\d+/.test(url)) {
-        sendText(chatId, '这不是分秒帧项目链接，要形如 https://app.mediatrack.cn/projects/<id>/files');
+      // 2026-11-10：粗剪批注改走「审片空间」链接，/reviews/<id>?fileId=… 也收
+      if (!/mediatrack\.cn\/(projects|reviews)\/\d+/.test(url)) {
+        sendText(chatId, '这不是分秒帧链接，要形如\n· 项目页：https://app.mediatrack.cn/projects/<id>/files\n· 审片空间：https://app.mediatrack.cn/reviews/<id>?fileId=<id>&inviteid=…');
         return;
       }
       reviewsync.writeConfig({ mediatrackUrl: url, lastSyncAt: 0 }, profile);
@@ -1068,12 +1304,6 @@ function onMessage(data) {
     }
 
     // 带分支/动作才真跑：粗剪（默认分支）直接同步会写表，预览只读，执行视同直接同步
-    // 去重：长连接超时会重推同一事件
-    if (state.handled.includes(msg.message_id)) return;
-    state.handled.push(msg.message_id);
-    if (state.handled.length > 500) state.handled = state.handled.slice(-500);
-    saveState();
-
     // 防重入：一轮同步要好几分钟，跑着的时候别再开第二轮
     if (tbpzRunning) {
       sendText(chatId, '⏳ 批注同步已经在跑了；全量最多 120 分钟，增量最多 60 分钟。可发 /tbpz 中断 停止。');
@@ -1115,6 +1345,8 @@ function onMessage(data) {
           `模式：${r.full ? '全量' : (r.sinceMs ? '增量（自 ' + new Date(r.sinceMs).toLocaleString('zh-CN') + '）' : '全量（首次）')}`,
           `视频 ${r.videos} 个 · 读到批注 ${r.comments} 条 · 新增 ${r.dryRun ? r.fresh : r.written} 条`,
         ];
+        if (!r.cachedWrite && !r.cacheComplete) lines.push('⚠️ 采集未完整结束，增量水位未推进，请重试核对。');
+        if (!r.cachedWrite && r.failed) lines.push(`⚠️ ${r.failed} 条批注未写入，增量水位未推进。`);
         if (r.cachedWrite) {
           lines.push('来源：最近一次预览缓存（未重新采集）');
           if (!r.cacheComplete) lines.push('⚠️ 原预览采集未完整结束，本次仅写入缓存部分，未推进增量水位。');
@@ -1154,6 +1386,8 @@ function onMessage(data) {
       sendText(chatId, '用法：/driveup <文件名>\n例：/driveup test文件\n（从云盘收件夹里找，不用在聊天框发给我）');
       return;
     }
+
+    if (!uploadEnabled()) { sendText(chatId, UPLOAD_PAUSED_TEXT); return; }
 
     log(`/driveup 收到「${arg}」（${chatType}）`);
     sendText(chatId, `在云盘收件夹里找「${arg}」…`);
@@ -1199,7 +1433,7 @@ function onMessage(data) {
         sendText(chatId, `下载中：${mb.toFixed(0)} MB${total ? '/' + total.toFixed(0) + ' MB' : ''}`);
       });
       log(`/driveup ${f.name} 下载完成，开始上传`);
-      sendText(chatId, renamed
+      await sendText(chatId, renamed
         ? `收到 ${f.name}（修改版），按「${uploadName}」传成这一集的新版本，开始。`
         : `好，把云盘里的 ${f.name} 传成「${uploadName}」，开始。`);
       enqueue({
@@ -1207,6 +1441,7 @@ function onMessage(data) {
         outName: uploadName,
         sourceName: f.name,
         localPath: tmp,
+        driveSourceToken: f.token,
         by: { openId: operatorId },
         onDone: async (ok) => {
           if (ok) drivefolder.finish(f.token, tmp);
@@ -1229,9 +1464,12 @@ function onMessage(data) {
         sendText(chatId, '云盘投递还没配。发：\n/drive <共享文件夹链接>\n然后用 /drive 手动扫一次（也会每 5 分钟自动扫）。');
         return;
       }
+      if (!uploadEnabled()) { sendText(chatId, '⏸ 上传已暂停，云盘投递这会儿不扫（文件留在文件夹里，不会丢）。'); return; }
       sendText(chatId, '扫云盘文件夹中…');
-      drivefolder.scanOnce().then((r) => {
+      drivefolder.scanOnce(true).then((r) => {
+        if (r.paused) return sendText(chatId, '⏸ 上传已暂停，这轮没扫。');
         if (r.skipped) return sendText(chatId, '正在扫或没配置，稍后再试。');
+        for (const item of r.items) enqueueDriveItem(item, { chatId, operatorId });
         sendText(chatId, `扫描完成：文件夹里 ${r.files} 个文件，新视频 ${r.items.length} 个。\n${r.items.map((i) => '· ' + i.name).join('\n')}`);
       }).catch((e) => sendText(chatId, '扫描失败：' + ((e && e.message) || e)));
       return;
@@ -1245,7 +1483,7 @@ function onMessage(data) {
     try {
       const raw = JSON.parse(fs.readFileSync(path.join(cfg.ROOT, 'config.json'), 'utf8'));
       raw.driveInbox = Object.assign({ enabled: true, pollMinutes: 5 }, raw.driveInbox, { folderToken: m[1], folderUrl: arg });
-      fs.writeFileSync(path.join(cfg.ROOT, 'config.json'), JSON.stringify(raw, null, 2) + '\n');
+      writeJson(path.join(cfg.ROOT, 'config.json'), raw);
       sendText(chatId, `✅ 云盘投递文件夹已设为：\n${arg}\n\n每 5 分钟自动扫一次，也可以 /drive 立刻扫。\n前提：这个文件夹要把「乌小河」加为可阅读。`);
     } catch (e) {
       sendText(chatId, '设置失败：' + ((e && e.message) || e));
@@ -1268,8 +1506,8 @@ function onMessage(data) {
         target.describe(t),
         '',
         '要换：/target <分秒帧项目链接>',
-        '例子：/target https://app.mediatrack.cn/projects/2109939996814217216/files',
-        '带文件夹就带上 ?path=… —— 上传会进那个文件夹。',
+        '例子：/target https://app.mediatrack.cn/projects/<项目id>/files?path=<文件夹id>',
+        '带文件夹就带上 ?path=… —— 上传会进那个文件夹；不带就是项目根目录。',
       ].join('\n'));
       return;
     }
@@ -1318,6 +1556,45 @@ function onMessage(data) {
         if (!sent) sendText(chatId, '体检卡没发出去，看 logs/bot.log');
       })
       .catch((e) => sendText(chatId, '体检失败：' + ((e && e.message) || e)));
+    return;
+  }
+
+  // /积分提醒 —— 工作日 18:15 自动发到群；这条命令只是看名单 / 预览 / 手动补发
+  if (text && /^\/(?:积分提醒|jftx)(\s+.*)?$/i.test(text.trim())) {
+    const chatId = msg.chat_id;
+    const chatType = msg.chat_type || 'p2p';
+    if (!chatAllowed(chatType, chatId)) return;
+    const arg = (/^\/(?:积分提醒|jftx)(\s+.*)?$/i.exec(text.trim())[1] || '').trim();
+    const mine = !!(operatorId && OWNER_OPEN_ID && operatorId === OWNER_OPEN_ID);
+    log(`收到 /积分提醒 ${arg || ''}`.trim());
+
+    if (/^发送$/.test(arg)) {
+      if (!mine) {
+        sendText(chatId, '只有陈俊杰能手动补发。这条提醒是自动的：工作日 18:15 机器自己发到群里，不用发命令。');
+        return;
+      }
+      pointsReminder.send(pointsReminder.conf())
+        .then((r) => sendText(chatId, r.sent
+          ? `✅ 已补发到群：${r.people} 位制作师、${r.tasks} 条任务（${(r.names || []).join('、')}）`
+          : `没发：${r.skipped || '未知原因'}`))
+        .catch((e) => sendText(chatId, '补发失败：' + ((e && e.message) || e)));
+      return;
+    }
+
+    if (/^预览$/.test(arg)) {
+      pointsReminder.collect(pointsReminder.conf())
+        .then(({ people }) => {
+          if (!people.length) { sendText(chatId, '今天没有符合条件的制作排期，正式到点也不发。'); return null; }
+          return sendInteractive(chatId, pointsReminder.buildCard(people, pointsReminder.conf(), { preview: true }))
+            .then((ok) => { if (!ok) sendText(chatId, '预览卡没发出去，看 logs/bot.log'); });
+        })
+        .catch((e) => sendText(chatId, '预览失败：' + ((e && e.message) || e)));
+      return;
+    }
+
+    pointsReminder.describe()
+      .then((s) => sendText(chatId, `${s}\n\n这条提醒是自动的：工作日 18:15 机器人自己发到群里，不用发命令。\n想单独看：/积分提醒 预览 ｜ 想补发一次：/积分提醒 发送`))
+      .catch((e) => sendText(chatId, '读表失败：' + ((e && e.message) || e)));
     return;
   }
 
@@ -1419,7 +1696,7 @@ function onMessage(data) {
 
   const cmd = parseTextCommand(msg, COMMAND);
   if (cmd) {
-    onCommand(cmd, msg, operatorId);
+    onCommand(cmd, msg, operatorId).catch((e) => log('命令处理异常：' + ((e && e.message) || e)));
     return;
   }
 
@@ -1429,11 +1706,7 @@ function onMessage(data) {
     const chatId = msg.chat_id;
     const chatType = msg.chat_type || 'p2p';
     if (!chatAllowed(chatType, chatId)) return;
-    if (state.handled.includes(msg.message_id)) return;
-    state.handled.push(msg.message_id);
-    if (state.handled.length > 500) state.handled = state.handled.slice(-500);
-    saveState();
-
+    if (!uploadEnabled()) { sendText(chatId, UPLOAD_PAUSED_TEXT); return; }
     (async () => {
       const name = (await drive.fileName(link.token)) || `drive-${link.token.slice(-6)}.mp4`;
       const tmp = taskTempPath(name, link.token);
@@ -1443,6 +1716,8 @@ function onMessage(data) {
         att: { fileName: name, chatId, messageId: 'drive-' + link.token },
         outName: name,
         localPath: tmp,
+        driveSourceToken: f.token,
+        by: { openId: operatorId },
         onDone: async () => { cleanupTemp(tmp); },
       });
     })().catch((e) => sendText(chatId, '下载失败：' + ((e && e.message) || e)));
@@ -1451,7 +1726,8 @@ function onMessage(data) {
 
   const att = parseAttachment(msg);
   if (!att) return;
-  onVideo(att);
+  att.senderId = operatorId;
+  onVideo(att).catch((e) => log('视频消息处理异常：' + ((e && e.message) || e)));
 }
 
 // ---------------------------------------------------------------- 启动
@@ -1460,7 +1736,7 @@ async function selfTest() {
   if (!cfg.APP_ID || !cfg.APP_SECRET) {
     throw new Error('还没填 .env 里的 FEISHU_APP_ID / FEISHU_APP_SECRET');
   }
-  const res = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+  const res = await fetch('https://example.invalid/feishu-resource', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify({ app_id: cfg.APP_ID, app_secret: cfg.APP_SECRET }),
@@ -1481,16 +1757,16 @@ async function main() {
     return;
   }
 
-  await selfTest();
-
   // 等 15 秒：重启时 stop.sh 刚发 SIGTERM，老进程退干净之前不能直接判失败
   const lock = botLock.acquire(cfg.ROOT, { waitMs: 15000 });
   if (!lock.ok) {
-    log(`❌ 已经有实例在跑（pid ${lock.pid}），这个进程退出`);
-    console.error(`✗ 已经有实例在跑（pid ${lock.pid}）。要重启：./stop.sh 然后 ./start.sh`);
+    log(`❌ 启动被拒绝：${lock.pid ? '已有实例 pid ' + lock.pid : lock.error || '单实例锁尚未就绪'}`);
+    console.error('✗ 单实例锁未取得，请先核对已有进程与锁文件。');
     process.exit(1);
   }
   process.on('exit', () => botLock.release(cfg.ROOT));
+  fs.writeFileSync(path.join(cfg.ROOT, 'bot.pid'), String(process.pid));
+  await selfTest();
 
   fs.mkdirSync(cfg.DOWNLOAD_DIR, { recursive: true });
   log('目标项目：' + cfg.PROJECT_URL);
@@ -1576,30 +1852,31 @@ async function main() {
 
   await wsClient.start({ eventDispatcher: dispatcher });
   log('服务已启动');
+  startAdminRuntime();
+  killOrphanWorkers(); // 先收掉上次没死透的上传子进程，不然会和本次恢复的任务同时传，顶成 v2
   restoreQueue(); // 上次没传完的接着传（进程重启不再白下）
   cleanOldDownloads(); // 顺手清掉 3 天前的残留
   flow.startScheduler();
   startHealthScheduler();
+  pointsReminder.startScheduler(() => state, saveState);
   release.startScheduler();
   checkRestartFeedback();
 
   // 云盘投递文件夹：同事传的大文件走这里
-  drivefolder.start((item) => {
-    const outName = item.uploadName || epname.stripRev(item.name);
-    log(`云盘投递：发现 ${item.name}（${(item.size / 1024 / 1024).toFixed(1)} MB）` +
-      (outName !== item.name ? `，识别为修改版，按 ${outName} 上传` : ''));
-    enqueue({
-      att: { fileName: item.name, chatId: null, messageId: 'drive-' + item.token },
-      outName,
-      sourceName: item.name,
-      localPath: item.local,
-      notifyOpenId: (cfg.INBOX && cfg.INBOX.notifyOpenId) || '',
-      onDone: async () => { drivefolder.finish(item.token, item.local); },
-    });
-  });
+  // 第二个参数是「上传是否被暂停」——停了就连扫描下载都跳过（见 config.json → upload）
+  drivefolder.start(enqueueDriveItem, () => !uploadEnabled());
 
   // 本地投递箱：>100 MB 的大文件走这里
   inbox.start((item) => {
+    if (!uploadEnabled()) {
+      // 解开占用，恢复上传后下一轮扫描能自动捡起来；日志 10 分钟最多一条，别刷屏
+      inbox.clearBusy(item);
+      if (Date.now() - lastInboxPauseLog > 10 * 60 * 1000) {
+        lastInboxPauseLog = Date.now();
+        log(`上传已暂停，投递箱里的 ${item.outName} 先放着（恢复后自动接着传）`);
+      }
+      return;
+    }
     log(`投递箱：发现 ${item.fileName}（${(item.size / 1024 / 1024).toFixed(1)} MB）→ ${item.outName}`);
     enqueue({
       att: { fileName: item.outName, chatId: null, messageId: 'inbox-' + Date.now() },
@@ -1614,6 +1891,7 @@ async function main() {
   // 优雅退出
   const shutdown = () => {
     log('收到退出信号，关闭长连接');
+    killWorkerGroup();  // detached 的 worker 不跟着死，会继续在浏览器里传 → 重启后变成两个窗口
     try { wsClient.close({ force: true }); } catch (e) {}
     process.exit(0);
   };
@@ -1621,18 +1899,53 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-main().catch((e) => {
+if (require.main === module) main().catch((e) => {
   log('❌ 启动失败：' + (e && e.message));
   process.exit(1);
 });
 
 // 本机管理台只通过持久命令请求既有队列，不启动第二条上传链路。
-setInterval(() => {
+function startAdminRuntime() { return setInterval(async () => {
   try {
-    require('./admin-runtime').tick({
+    await require('./admin-runtime').tick({
       current: currentJob ? { name: currentJob.outName, queuedAt: currentJob.queuedAt } : null,
       queue: queue.map(j => ({ name: j.outName, queuedAt: j.queuedAt })),
       sync: tbpzRunning || (require('./schedulesync').isRunning?.() || false),
-    }, enqueue);
+    }, enqueue, resolvePendingUpload);
   } catch (e) { log('管理台状态写入失败：' + e.message); }
-}, 2000).unref();
+}, 2000).unref(); }
+
+function enqueueDriveItem(item, { chatId = null, operatorId = '' } = {}) {
+  return enqueue({
+    att: { fileName: item.name, chatId, messageId: 'drive-' + item.token },
+    outName: item.uploadName || epname.stripRev(item.name),
+    sourceName: item.name,
+    localPath: item.local,
+    by: operatorId ? { openId: operatorId } : null,
+    notifyOpenId: OWNER_OPEN_ID,
+    driveSourceToken: item.token,
+    onDone: async (ok) => { drivefolder.finish(item.token, item.local, ok); },
+  });
+}
+
+module.exports = { onMessage, onCommand, onVideo, pendingKey, targetFileName, uploadKey, dupUpload, enqueueDriveItem, runJob, resolvePendingUpload, restoreQueue };
+
+async function resolvePendingUpload(command) {
+  if (command.type === 'notification-retry') return flow.retryNotification(command.id);
+  const record = pendingUploads.list().find(r=>r.id===command.id);
+  if (!record) throw Error('待确认记录已处理或不存在');
+  if (busy || queue.length) throw Error('请等待上传队列空闲后核对');
+  const job = record.job;
+  if (['confirmed-uploaded','confirmed-uploaded-no-backwrite'].includes(command.action)) {
+    if (command.action === 'confirmed-uploaded') await markEpisodeReady(job.chatId || job.att?.chatId, job.outName, job.taskBinding, true);
+    if (job.inboxItem) inbox.markDone(job.inboxItem);
+    if (job.driveSourceToken) drivefolder.finish(job.driveSourceToken, job.localPath, true);
+    pendingUploads.set(record.id, 'confirmed-uploaded', command.action === 'confirmed-uploaded' ? '操作者核对平台后确认；已补写适用任务状态' : '操作者确认文件已上传，保留当前任务表状态');
+  } else if (command.action === 'confirmed-missing-retry') {
+    const retry = {...job,confirmationRetry:true,confirmationId:record.id,queuedAt:Date.now()};
+    if (retry.localPath && !fs.existsSync(retry.localPath)) throw Error('原文件不存在，请重新提交；不要确认已上传');
+    if (job.driveSourceToken) retry.onDone = ok => drivefolder.finish(job.driveSourceToken, job.localPath, ok);
+    if (!enqueue(retry)) throw Error('未入队，请检查上传开关');
+    // 复用确认记录，begin() 会在再次动浏览器之前更新持久描述。
+  } else throw Error('未识别的核对操作');
+}

@@ -10,6 +10,8 @@ const path = require('path');
 
 /** 可以作为分隔符的字符（去掉后不影响主体名） */
 const SEP_CH = '\\s\\-_·.．、,，()（）\\[\\]【】';
+/** 结尾清理只去空白和连接符，**不含括号** —— 把 108(3) 的右括号吃掉会造出无效文件名 */
+const TRAIL_CH = '\\s\\-_·.．、,，';
 
 /**
  * 修改标记词。必须按长度倒序拼进正则，否则「改版」会先被「改」吃掉、留下一个「版」。
@@ -26,9 +28,12 @@ const REV_WORDS = [
 
 const WORD = '(?:' + REV_WORDS.slice().sort((a, b) => b.length - a.length).join('|') + ')';
 
-/** 文件名末尾的「-改 / _改2 / (修改版) / 改-2 / v2 / final」 */
+/**
+ * 文件名末尾的「-改 / _改2 / (修改版) / 改-2 / v2 / final」
+ * 前半段连接符**不含括号**：否则 "108(3)-改" 会从右括号处切开，剩下 "108(3"。
+ */
 const RE_TAIL = new RegExp(
-  `[${SEP_CH}]*${WORD}(?:\\d+)?(?:[${SEP_CH}]*\\d+)*[${SEP_CH}]*$`,
+  `[${TRAIL_CH}]*${WORD}(?:\\d+)?(?:[${SEP_CH}]*\\d+)*[${SEP_CH}]*$`,
   'i'
 );
 
@@ -46,12 +51,20 @@ function stripRev(name) {
   const ext = path.extname(s);
   let base = ext ? s.slice(0, -ext.length) : s;
 
-  // 连剥几次：「122-改-修改」这种叠着写的
+  // 连剥几次：「122-改-修改」「108(3)-改」这种叠着写的
+  // 注意：必须「先匹配到修改标记」才动名字。原来每轮都无条件削掉结尾分隔符，
+  // 把 93-1(2).mp4 削成了 93-1(2.mp4（下载重名常见的括号后缀），上传名就废了。
   for (let i = 0; i < 3; i++) {
-    const next = base.replace(RE_TAIL, '').replace(new RegExp(`[${SEP_CH}]+$`), '');
-    if (next === base) break;
-    if (!next) break; // 整个名字就是「改」——别吃光
-    base = next;
+    const before = base;
+    // 浏览器 / macOS 下载重名会自动加 (1) (2)：不是版本也不是场次，削掉
+    base = base.replace(/[（(]\s*\d{1,2}\s*[)）]$/, '');
+    const m = base.match(RE_TAIL);
+    if (m) {
+      // 切完顺手清掉结尾的连接符和孤立左括号（"93(改)" → "93(" → "93"）
+      const cut = base.slice(0, m.index).replace(/[\s\-_·.．、,，（(【[]+$/, '');
+      if (cut) base = cut; // 整个名字就是「改」时别吃光
+    }
+    if (base === before) break;
   }
   return base + ext;
 }

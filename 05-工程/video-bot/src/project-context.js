@@ -34,11 +34,19 @@ function projectForTarget(url, explicitKey) {
     const selected = projects().find(p => p.key === explicitKey);
     const legacy = projects().find(p => p.key === "legacy");
     const parse = require("./target").parseTarget;
-    let sameProject = false;
-    try { sameProject = !!legacy && parse(url).projectId === parse(legacy.projectUrl).projectId; } catch {}
-    if (!selected || explicitKey !== "nts3" || !sameProject)
-      throw new Error("所选项目与上传目录不匹配");
-    return {...selected, uploadKind: "rough"};
+    if (!selected) throw new Error("所选项目与上传目录不匹配");
+    const pid = (u) => { try { return parse(u).projectId; } catch (e) { return ""; } };
+    const got = pid(url);
+    // 2026-11-10 修：原来硬校验「必须等于 legacy（第二季）项目 id」——
+    // 那是第三季分秒帧链接还没给、上传目录沿用第二季时的临时约束，
+    // 第三季自己的粗剪链接一绑上就会误报「所选项目与上传目录不匹配」。
+    // 现在按本项目自己绑的目录判断：粗剪 / 精剪 / 共用上传目录都算，
+    // 同时保留 legacy 目录（第三季链接没给前的历史目录 + /upmedia 逆天萌兽3 过渡写法）。
+    const allowed = [selected.projectUrl, selected.trimPreviewUrl, selected.sharedUploadUrl, legacy && legacy.projectUrl]
+      .map(pid).filter(Boolean);
+    if (!got || !allowed.includes(got)) throw new Error("所选项目与上传目录不匹配");
+    const kind = selected.trimPreviewUrl && url === selected.trimPreviewUrl ? "fine" : "rough";
+    return { ...selected, uploadKind: kind };
   }
   const hits = projects().flatMap(p => [
     ...(p.projectUrl === url ? [{...p, uploadKind: 'rough'}] : []),

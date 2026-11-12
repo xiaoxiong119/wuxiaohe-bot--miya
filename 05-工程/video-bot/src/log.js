@@ -28,13 +28,25 @@ function log(msg) {
 
 /** 读日志文件最后 n 行（体检/报错回传时给小熊看原始日志） */
 function tailLines(n = 40) {
+  const count = Math.max(0, Math.floor(Number(n) || 0));
+  if (!count) return [];
+  let fd;
   try {
-    const txt = fs.readFileSync(path.join(LOG_DIR, 'bot.log'), 'utf8');
-    const lines = txt.split('\n').filter(Boolean);
-    return lines.slice(-n);
-  } catch (e) {
-    return [];
-  }
+    fd = fs.openSync(path.join(LOG_DIR, 'bot.log'), 'r');
+    const size = fs.fstatSync(fd).size;
+    let length = Math.min(size, 16384);
+    for (;;) {
+      const start = Math.max(0, size - length);
+      const buffer = Buffer.alloc(length);
+      const got = fs.readSync(fd, buffer, 0, length, start);
+      let text = buffer.subarray(0, got).toString('utf8');
+      if (start) text = text.slice(text.indexOf('\n') + 1);
+      const lines = text.split('\n').filter(Boolean);
+      if (lines.length >= count || start === 0 || length >= 1048576) return lines.slice(-count);
+      length = Math.min(size, length * 2, 1048576);
+    }
+  } catch { return []; }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
 /** 只要看起来像报错的行 */

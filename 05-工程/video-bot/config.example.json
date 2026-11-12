@@ -1,0 +1,194 @@
+{
+  "projectUrl": "",
+  "uploadProject": "nts3",
+  "upload": {
+    "enabled": false,
+    "testMode": false,
+    "dupWindowMinutes": 30
+  },
+  "downloadDir": "./downloads",
+  "allowP2P": true,
+  "allowGroups": [],
+  "allowedExtensions": [
+    ".mp4",
+    ".mov",
+    ".mkv",
+    ".avi",
+    ".m4v",
+    ".webm"
+  ],
+  "replyOnReceive": true,
+  "command": "/upmedia",
+  "waitSeconds": 300,
+  "baseCommand": "/base",
+  "base": {
+    "appToken": "",
+    "tableId": "",
+    "episodeField": "集数",
+    "personField": "制作师",
+    "writableFields": [
+      "素材生成进展",
+      "进展",
+      "审阅反馈",
+      "剪辑进度",
+      "二轮审阅反馈"
+    ],
+    "valueAliases": {
+      "已上传": "已完成并上传",
+      "一审": "已粗剪待一审"
+    }
+  },
+  "flow": {
+    "enabled": false,
+    "projects": [
+      "nts3"
+    ],
+    "tickMinutes": 1
+  },
+  "health": {
+    "enabled": false,
+    "from": 10,
+    "to": 19
+  },
+  "inbox": {
+    "enabled": false,
+    "dir": "./inbox",
+    "pollSeconds": 10,
+    "notifyOpenId": ""
+  },
+  "driveInbox": {
+    "enabled": false,
+    "auto": false,
+    "folderToken": "",
+    "folderUrl": "",
+    "pollMinutes": 5
+  },
+  "release": {
+    "enabled": false,
+    "chats": []
+  },
+  "pointsReminder": {
+    "enabled": false,
+    "hour": 18,
+    "minute": 15,
+    "graceMinutes": 45,
+    "projectKey": "nts3",
+    "chatId": "",
+    "chatName": "",
+    "pointsUrl": "",
+    "taskUrl": "",
+    "excludeEpisodes": [
+      999
+    ]
+  },
+  "notificationPolicy": {
+    "quiet": {
+      "enabled": false,
+      "start": "22:00",
+      "end": "08:00"
+    },
+    "features": {
+      "review": {
+        "enabled": true,
+        "mode": "business",
+        "openIds": []
+      },
+      "revision": {
+        "enabled": true,
+        "mode": "business",
+        "openIds": []
+      },
+      "editing": {
+        "enabled": true,
+        "mode": "business",
+        "openIds": []
+      },
+      "finalReview": {
+        "enabled": true,
+        "mode": "business",
+        "openIds": []
+      },
+      "health": {
+        "enabled": true,
+        "mode": "business",
+        "openIds": []
+      },
+      "receipt": {
+        "enabled": true,
+        "mode": "business",
+        "openIds": []
+      }
+    }
+  },
+  "privateNotificationOptOut": [],
+  "legacyProjectUrl": "",
+  "legacyTrimPreviewUrl": "",
+  "sceneProjects": [
+    {
+      "key": "nts3",
+      "name": "《逆天萌兽3》",
+      "enabled": false,
+      "sceneMode": true,
+      "projectUrl": "",
+      "trimPreviewUrl": "",
+      "tableUrl": "",
+      "notesField": "修改位置",
+      "base": {
+        "appToken": "",
+        "tableId": ""
+      }
+    }
+  ],
+  "scheduleSync": {
+    "enabled": false,
+    "projectName": "《逆天萌兽3》",
+    "sourceUrl": "",
+    "spreadsheetToken": "",
+    "sheetId": "",
+    "appToken": "",
+    "tableId": "",
+    "pointsTableId": "",
+    "targetUrl": "",
+    "year": 2026,
+    "people": {},
+    "personAliases": {},
+    "ignoredColors": [
+      "#ffffff"
+    ],
+    "sceneAliases": {},
+    "verifiedScenes": {},
+    "defaultFields": {}
+  },
+  "reviewSync": {
+    "mediatrackUrl": "",
+    "bitableUrl": "",
+    "appToken": "",
+    "tableId": "",
+    "lastSyncAt": 0
+  },
+  "reviewSyncFineCut": {
+    "mediatrackUrl": "",
+    "bitableUrl": "",
+    "appToken": "",
+    "tableId": "",
+    "lastSyncAt": 0
+  },
+  "reviewSyncNts3": {
+    "mediatrackUrl": "",
+    "bitableUrl": "",
+    "appToken": "",
+    "tableId": "",
+    "lastSyncAt": 0,
+    "sceneMode": true,
+    "episodeRows": true
+  },
+  "reviewSyncNts3FineCut": {
+    "mediatrackUrl": "",
+    "bitableUrl": "",
+    "appToken": "",
+    "tableId": "",
+    "lastSyncAt": 0,
+    "sceneMode": true,
+    "episodeRows": true
+  }
+}

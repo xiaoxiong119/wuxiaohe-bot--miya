@@ -16,20 +16,7 @@ const { downloadToFile } = require('./feishu');
 
 const FEISHU_HOST = 'https://open.feishu.cn';
 
-let tokenCache = { token: '', exp: 0 };
-
-async function tenantToken() {
-  if (tokenCache.token && Date.now() < tokenCache.exp - 60000) return tokenCache.token;
-  const res = await fetch(`${FEISHU_HOST}/open-apis/auth/v3/tenant_access_token/internal`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ app_id: cfg.APP_ID, app_secret: cfg.APP_SECRET }),
-  });
-  const data = await res.json();
-  if (data.code !== 0) throw new Error(`取 tenant token 失败：${data.msg}`);
-  tokenCache = { token: data.tenant_access_token, exp: Date.now() + data.expire * 1000 };
-  return tokenCache.token;
-}
+const { tenantToken } = require('./feishu');
 
 /** 从一段文字里找飞书云空间文件链接 */
 function parseLink(text) {
@@ -62,8 +49,9 @@ async function download(fileToken, destPath, onProgress) {
 async function fileName(fileToken) {
   try {
     const token = await tenantToken();
-    const res = await fetch('https://open.feishu.cn/open-apis/drive/v1/metas/batch_query', {
+    const res = await fetch('https://example.invalid/feishu-resource', {
       method: 'POST',
+      signal: AbortSignal.timeout(15000),
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ request_docs: [{ doc_token: fileToken, doc_type: 'file' }], with_url: false }),
     });

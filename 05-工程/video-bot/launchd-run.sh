@@ -23,6 +23,7 @@ CHECK=0
 # ---- launchd 给的环境极简（PATH 只有 /usr/bin:/bin:...），下面补齐 start.sh 里踩过的所有坑 ----
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export BSK_AUTO_START=0
+export TZ=Asia/Shanghai
 
 # 别继承代理：本地代理随会话消失，机器人会全线 ECONNREFUSED
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
@@ -97,5 +98,5 @@ fi
 # bot.pid 指到即将 exec 的进程（exec 不换 pid，status.sh / stop.sh 照旧认）
 echo $$ > bot.pid
 
-echo "[$(date '+%F %T')] launchd 拉起主进程 pid $$（$NODE）"
+echo "[$(date '+%F %T')] launchd 拉起主进程 pid $$（${NODE}）"
 exec "$NODE" src/index.js

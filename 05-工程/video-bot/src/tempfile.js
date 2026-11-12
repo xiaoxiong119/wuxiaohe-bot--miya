@@ -19,7 +19,8 @@ function isTaskDir(name) {
 function taskPath(rootDir, outName, tag) {
   const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const safeTag = String(tag || '').replace(/[^\w-]/g, '').slice(-8);
-  return path.join(rootDir, `${TASK_DIR_PREFIX}${stamp}-${safeTag}`, outName);
+  const name = require('./feishu').safeName(outName);
+  return path.join(rootDir, `${TASK_DIR_PREFIX}${stamp}-${safeTag}`, name);
 }
 
 /** 删文件，顺便把空的任务目录收掉；只碰 .t- 目录，别的地方不动物 */

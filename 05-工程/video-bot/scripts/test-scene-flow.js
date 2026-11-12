@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict'), fs = require('fs'), path = require('path'), vm = require('vm');
-const root = path.join(__dirname,'..'), PC = require('../src/project-context');
+const root = path.join(__dirname,'..'), fixture = require('./test-fixtures').fixtures(), PC = fixture.pc;
 const projects = PC.projects(); assert(projects.some(p=>p.key==='nts3'));
 const t2=projects.find(p=>p.key==='legacy').base.tableId,t3=projects.find(p=>p.key==='nts3').base.tableId;
 const make=(id,scene)=>({record_id:id,fields:{集数:64,...(scene?{场次:scene}:{}),素材生成进展:'已粗剪待一审',审阅反馈:'未审阅',剪辑进度:'待开始',制作师:[{id:'artist',name:'测试制作师'}],审片人:[{id:'reviewer',name:'测试审片人'}],剪辑师:[{id:'editor',name:'测试剪辑师'}]}});
@@ -9,8 +9,9 @@ const records={search:async({path:p})=>({data:{items:tables[p.table_id],has_more
 const realRequire=require('module').createRequire(path.join(root,'src/flow.js'));
 const mod={exports:{}};
 vm.runInNewContext(fs.readFileSync(path.join(root,'src/flow.js'),'utf8'),{module:mod,exports:mod.exports,process:{env:{FLOW_STATE_READONLY:'1'}},setTimeout,clearTimeout,setInterval,clearInterval,require:n=>{
- if(n==='fs')return{readFileSync:p=>{if(String(p).endsWith('config.json'))return '{}';throw Error('no state');}};
- if(n==='./config')return{ROOT:root,BASE:PC.base,FLOW:{enabled:true,tickMinutes:1}};
+ if(n==='fs')return fs;
+ if(n==='./project-context')return PC;
+ if(n==='./config')return{ROOT:fixture.root,BASE:PC.base,FLOW:{enabled:true,tickMinutes:1}};
  if(n==='./feishu')return{getClient:()=>({bitable:{v1:{appTableRecord:records}},im:{v1:{message:{create:async()=>({code:0})}}}}),withTimeout:p=>p,sendTextTo:async()=>{}};
  if(n==='./log')return{log:()=>{}};
  return realRequire(n);

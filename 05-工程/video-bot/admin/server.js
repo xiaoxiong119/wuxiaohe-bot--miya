@@ -15,7 +15,11 @@ const revision = s => crypto.createHash('sha256').update(s).digest('hex');
 const fields = [
  ['projectUrl','视频上传目标','media','立即生效'],
  ['base.previewUrl','审阅卡片中的预览链接','media','重启机器人后生效'],
- ['reviewSync.mediatrackUrl','粗剪 · 分秒帧批注来源','media','下次同步生效'],
+ ['reviewSyncNts3.mediatrackUrl','第三季粗剪 · 分秒帧批注来源','media','下次同步生效'],
+ ['reviewSyncNts3.bitableUrl','第三季粗剪 · 批注写入表','base','下次同步生效'],
+ ['reviewSyncNts3FineCut.mediatrackUrl','第三季精剪 · 分秒帧批注来源','media','下次同步生效'],
+ ['reviewSyncNts3FineCut.bitableUrl','第三季精剪 · 批注写入表','base','下次同步生效'],
+ ['reviewSync.mediatrackUrl','第二季粗剪 · 分秒帧批注来源','media','下次同步生效'],
  ['reviewSync.bitableUrl','粗剪 · 批注写入表','base','下次同步生效'],
  ['reviewSyncFineCut.mediatrackUrl','精剪 · 分秒帧批注来源','media','下次同步生效'],
  ['reviewSyncFineCut.bitableUrl','精剪 · 批注写入表','base','下次同步生效'],
@@ -58,6 +62,7 @@ async function patch(input){
  // 采集脚本只认列表卡片（div.item + img[alt]），这两种页面都有，2026-11-02 实测 reviews 空间可正常采集。
  const projectFiles=/^\/projects\/\d+\/files\/?$/.test(u.pathname)&&(!u.searchParams.has('path')||/^\d+$/.test(u.searchParams.get('path')));
  const reviewSpace=/^\/reviews\/\d+\/?$/.test(u.pathname);
+ if(input.key==='projectUrl'&&!projectFiles)throw new Error('视频上传目标必须是分秒帧项目 files 链接');
  if(u.hostname!=='app.mediatrack.cn'||!(projectFiles||reviewSpace))throw new Error('需要分秒帧项目 files 链接或审片空间 reviews 链接');
  }else{
  if(!/(^|\.)(feishu\.cn|larksuite\.com)$/.test(u.hostname))throw new Error('需要飞书链接');
@@ -65,7 +70,7 @@ async function patch(input){
  if(field[2]==='base'){
  if(!/^tbl[a-zA-Z0-9]+$/.test(u.searchParams.get('table')||''))throw new Error('表格链接必须包含 table 参数');
  const parsed=await require('../src/reviewsync').parseBitableUrl(u.href);
- if(!parsed.appToken)throw new Error('无法解析表格真实标识');Object.assign(c[section],parsed);
+ if(!parsed.appToken)throw new Error('无法解析表格真实标识');Object.assign(c[section]??={},parsed);
  }else if(field[2]==='folder'){
  const m=/^\/drive\/folder\/([a-zA-Z0-9]+)$/.exec(u.pathname);if(!m)throw new Error('需要云盘文件夹链接');c.driveInbox.folderToken=m[1];
  }else{

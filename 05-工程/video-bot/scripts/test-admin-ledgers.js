@@ -1,0 +1,23 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {load}=require('./test-helpers'),{createStore}=require('../src/pending-uploads');
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'bot-admin-ledgers-'));
+process.env.ADMIN_TEST_ROOT=root;
+const ops=require('../admin/operations');
+const runtime=load('src/admin-runtime.js',{'./config':{ROOT:root}});
+(async()=>{try{
+ fs.writeFileSync(path.join(root,'config.json'),'{}');fs.writeFileSync(path.join(root,'bot.pid'),String(process.pid));
+ const snapshot={current:null,queue:[],sync:false};await runtime.tick(snapshot,()=>{throw Error('不应上传')});
+ const store=createStore(root);const id=store.begin({att:{messageId:'held'},outName:'held.mp4'});store.set(id,'pending');
+ await ops.action({action:'confirmed-uploaded-no-backwrite',id});
+ let calls=0;await runtime.tick(snapshot,()=>{throw Error('确认不能入上传队列')},async c=>{assert.equal(c.id,id);calls++;store.set(id,'confirmed-uploaded');});
+ assert.equal(calls,1);assert.equal(ops.state().pendingUploads.length,0);assert.equal(ops.state().commandResults.at(-1).ok,true);
+ fs.writeFileSync(path.join(root,'notification-outbox.json'),JSON.stringify([{id:'notice1',at:Date.now(),label:'一审',recipients:[{id:'b',status:'pending',attempts:4}]}]));
+ await ops.action({action:'notification-retry',id:'notice1'});
+ await runtime.tick(snapshot,()=>{throw Error('通知补发不能上传')},async c=>{assert.equal(c.type,'notification-retry');calls++;});assert.equal(calls,2);
+ const id2=store.begin({att:{messageId:'held2'},outName:'held2.mp4'});await ops.action({action:'confirmed-uploaded',id:id2});
+ await runtime.tick(snapshot,()=>false,async()=>{throw Error('任务状态有冲突')});
+ assert.equal(ops.state().commandResults.at(-1).ok,false);assert.equal(store.list().length,1,'核对失败必须继续挂起');
+ await assert.rejects(ops.action({action:'confirmed-uploaded',id:'foreign'}),/不存在/);
+ console.log('PASS：管理台核对/补发命令、单次消费、上传隔离、结果回显、冲突保留与无效记录拦截');
+}finally{fs.rmSync(root,{recursive:true,force:true})}})().catch(e=>{console.error(e);process.exitCode=1});

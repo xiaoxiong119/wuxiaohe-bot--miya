@@ -1,9 +1,10 @@
+const { writeJson } = require('./json-file');
 /**
  * 审阅流程：定时触发 + 卡片按钮回调
  *
  * 对应流程图里的自动化：
  *   ① 到开始日期 → 进展=进行中、素材生成进展=生成中
- *   ② 素材生成进展=已粗剪待一审 → 发一审卡片（审片人 + 剪辑师）
+ *   ② 素材生成进展=已粗剪待一审 → 发一审卡片（审片人）
  *   ③ 一审通过 → 通知制作师上传素材｜一审未通过 → 通知修改
  *   ④ 素材已上传 → 素材生成进展=已完成并上传 → 通知剪辑师精剪
  *   ③ 剪辑进度=可剪辑 + 素材已上传 + 一审通过 三者齐 → 发「开始精剪」卡片（剪辑师）
@@ -20,6 +21,7 @@ const path = require('path');
 const cfg = require('./config');
 const { getClient, withTimeout, sendTextTo } = require('./feishu');
 const { log } = require('./log');
+const { dataOf, allPages } = require('./pagination');
 const C = require('./cards');
 const policy = require('./notification-policy');
 
@@ -71,6 +73,7 @@ function mapRecord(it) {
     // 有效剪辑进度（表里写不进去的那几档记在机器人这边，卡片文案按它说）
     trimEffective: effectiveTrim({ recordId: it.record_id, trimStage }),
     startDate: typeof f['开始日期'] === 'number' ? f['开始日期'] : null,
+    doneAt: typeof f['实际完成日期'] === 'number' ? f['实际完成日期'] : null,
     artist: personList(f['制作师']),
     reviewers: personList(f['审片人']),
     editors: personList(f['剪辑师']),
@@ -84,55 +87,59 @@ function mapRecord(it) {
 }
 
 async function fetchAllRecords() {
-  const out = [];
-  let pageToken = '';
-  for (let i = 0; i < 20; i++) {
-    const res = await (async () => {
-      const call = () => withTimeout(getClient().bitable.v1.appTableRecord.search({
-        path: { app_token: B.appToken, table_id: B.tableId },
-        params: { page_size: 500, page_token: pageToken || undefined },
-        data: {},
-      }), 10000, '读表');
-      try {
-        return await call();
-      } catch (e) {
-        // 早上首次读表偶发超时（冷连接），重试一次；还失败就让 tick 记失败，下一分钟再来
-        await sleep(1500);
-        return call();
-      }
-    })();
-    const d = res.data || res;
-    out.push(...((d.items) || []).map(it => PC.register(mapRecord(it))));
-    if (!d.has_more) break;
-    pageToken = d.page_token || '';
-    if (!pageToken) break;
+  const rows = await allPages(pageToken => withRetry(() => getClient().bitable.v1.appTableRecord.search({
+    path: { app_token: B.appToken, table_id: B.tableId },
+    params: { page_size: 500, page_token: pageToken || undefined }, data: {},
+  }), '读表'), { label: '读表', timeout: 40000 });
+  return rows.map(it => PC.register(mapRecord(it)));
+}
+
+/**
+ * 单条读写重试（2026-11-10 加）。
+ * 巡检 tick 正在 search 149 条时，单条 get 偶发撞 10 秒超时（2026-11-10 16:55 传 93.mp4 回写就挂在这），
+ * 只重试一次，别把上传后的回写整段丢掉。
+ */
+async function withRetry(call, label, ms = 15000, tries = 2) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const response = await withTimeout(call(), ms, label);
+      dataOf(response, label);
+      return response;
+    } catch (e) {
+      last = e;
+      if (i < tries - 1) { log(`${label}第 ${i + 1} 次失败（${(e && e.message) || e}），重试`); await new Promise((r) => setTimeout(r, 1500)); }
+    }
   }
-  return out;
+  throw last;
 }
 
 async function getRecord(recordId) {
-  const res = await withTimeout(getClient().bitable.v1.appTableRecord.get({
+  const res = await withRetry(() => withTimeout(getClient().bitable.v1.appTableRecord.get({
     path: { app_token: B.appToken, table_id: B.tableId, record_id: recordId },
-  }), 10000, '读记录');
-  return mapRecord((res.data || res).record);
+  }), 15000, '读记录'), '读记录');
+  const record = dataOf(res, '读记录').record;
+  if (!record) throw new Error('读记录返回为空');
+  return mapRecord(record);
 }
 
 async function updateFields(recordId, fields) {
-  const response = await withTimeout(getClient().bitable.v1.appTableRecord.update({
+  const response = await withRetry(() => withTimeout(getClient().bitable.v1.appTableRecord.update({
     path: { app_token: B.appToken, table_id: B.tableId, record_id: recordId },
     data: { fields },
-  }), 10000, '改表');
+  }), 15000, '改表'), '改表');
   if (response.code) throw new Error(response.msg || '改表失败');
   log(`改表 ${recordId}：${Object.keys(fields).map((k) => `${k}=${flat(fields[k])}`).join('、')}`);
 }
 
-async function sendCard(openId, card) {
+async function sendCard(openId, card, uuid) {
   if (!openId) return false;
   try {
     const sent = await withTimeout(getClient().im.v1.message.create({
       params: { receive_id_type: 'open_id' },
       data: {
         receive_id: openId,
+        ...(uuid ? {uuid} : {}),
         msg_type: 'interactive',
         content: JSON.stringify(card),
       },
@@ -145,14 +152,62 @@ async function sendCard(openId, card) {
   }
 }
 
-async function notify(people, card, label) {
-  let ok = 0;
-  for (const p of people) {
-    if (await require('./notification-policy').context.run(require('./notification-policy').featureForLabel(label), () => sendCard(p.id, card))) ok++;
-    await sleep(200);
-  }
-  log(`卡片「${label}」已发 ${ok}/${people.length} 人`);
-  return ok;
+function notificationTargets(people, label) {
+  const raw = JSON.parse(fs.readFileSync(path.join(cfg.ROOT, 'config.json'), 'utf8'));
+  const feature = policy.featureForLabel(label);
+  return people.filter(person => {
+    const reason = policy.reason(raw, person.id, feature);
+    if (reason) logQuiet(`notification-block|${feature}|${label}|${person.id}`, `通知已跳过（${label}）：${reason}`);
+    return !reason;
+  });
+}
+
+function quietNow() {
+  const raw = JSON.parse(fs.readFileSync(path.join(cfg.ROOT, 'config.json'), 'utf8'));
+  return policy.quietAt(raw.notificationPolicy?.quiet);
+}
+
+function refreshNotificationSignature(key, rec) {
+  flowState.notificationSignatures = flowState.notificationSignatures || {};
+  const current=notificationSignature(rec),previous=flowState.notificationSignatures[key];
+  if(previous===current) return;
+  if(previous && previous!==current) flowState.sent.delete(key);
+  flowState.notificationSignatures[key]=current;
+  saveState();
+}
+function notificationSignature(rec) {
+  return JSON.stringify([rec.episode, rec.scene, rec.projectUrl, rec.trimPreviewUrl, rec.stage, rec.review, effectiveTrim(rec), rec.artist.map(x=>x.id).sort(), rec.editors.map(x=>x.id).sort(), rec.reviewers.map(x=>x.id).sort()]);
+}
+let outbox;
+const notificationReceipts = new WeakMap();
+function deliveredPeople(people) { const ids=notificationReceipts.get(people) || []; return people.filter(p=>ids.includes(p.id)); }
+function notificationOutbox() {
+  if (!outbox) outbox = require('./notification-outbox').createOutbox(path.join(cfg.ROOT, 'notification-outbox.json'), {
+    send: (id, card, uuid, event) => policy.context.run(policy.featureForLabel(event.label), () => sendCard(id, card, uuid)),
+    block: (id, event) => policy.reason(JSON.parse(fs.readFileSync(path.join(cfg.ROOT, 'config.json'), 'utf8')), id, policy.featureForLabel(event.label)),
+    valid: async event => {
+      if (!event.binding) return true;
+      const {recordId, projectKey, signature} = event.binding;
+      return PC.run(projectKey, async () => notificationSignature(await getRecord(recordId)) === signature);
+    }, log,
+  });
+  return outbox;
+}
+async function notifyDetailed(people, card, label, rec, eventKey) {
+  // 记录创建时回读已提交的业务状态，过期通知不再补发。
+  const current = rec || null;
+  const binding = current ? {recordId:rec.recordId, projectKey:rec.projectKey || 'legacy', signature:notificationSignature(current)} : null;
+  const result = await notificationOutbox().enqueue({
+    key:eventKey || require('node:crypto').randomUUID(),
+    family:rec ? `${rec.projectKey || 'legacy'}|${rec.recordId}|${label.replace(/（.*?）/g,'')}` : null,
+    people, card, label, binding,
+  });
+  notificationReceipts.set(people, result.deliveredIds || []);
+  log(`卡片「${label}」本次送达 ${result.sent}/${people.length} 人${result.complete ? '' : '，未送达人员已入补发台账'}`);
+  return result;
+}
+async function notify(people, card, label, rec) {
+  return (await notifyDetailed(people, card, label, rec)).sent;
 }
 
 /**
@@ -189,9 +244,12 @@ function loadState() {
       undo: (s.undo && typeof s.undo === 'object') ? s.undo : {},
       trimAt: (s.trimAt && typeof s.trimAt === 'object') ? s.trimAt : {},
       trimShadow: (s.trimShadow && typeof s.trimShadow === 'object') ? s.trimShadow : {},
+      notificationCycles: s.notificationCycles || {},
+      notificationSignatures: s.notificationSignatures || {},
+      quiet: (s.quiet && typeof s.quiet === 'object') ? s.quiet : {},
     };
   } catch (e) {
-    return { sent: new Set(), initialized: false, tries: {}, seen: null, undo: {}, trimAt: {}, trimShadow: {} };
+    return { sent: new Set(), initialized: false, tries: {}, seen: null, undo: {}, trimAt: {}, trimShadow: {}, quiet: {} };
   }
 }
 
@@ -201,7 +259,7 @@ function saveState() {
   // 自检脚本是独立进程（FLOW_STATE_READONLY=1），绝不能覆盖机器人内存里的去重状态
   if (process.env.FLOW_STATE_READONLY === '1') return;
   try {
-    fs.writeFileSync(SENT_FILE, JSON.stringify({
+    writeJson(SENT_FILE, {
       sent: [...flowState.sent].slice(-800),
       initialized: flowState.initialized,
       tries: flowState.tries || {},
@@ -209,10 +267,35 @@ function saveState() {
       undo: flowState.undo || {},
       trimAt: flowState.trimAt || {},
       trimShadow: flowState.trimShadow || {},
-    }, null, 2));
+      quiet: flowState.quiet || {},
+      notificationCycles: flowState.notificationCycles || {},
+      notificationSignatures: flowState.notificationSignatures || {},
+    });
   } catch (e) {
     /* 写失败不影响主流程 */
   }
+}
+
+/**
+ * 同一个「卡在某个状态」的自动化提示只记一次：巡检每 10 秒一轮，
+ * 每轮都把「93 集没有剪辑师」这类话打一遍，一天能刷几千行，把有用的信息全埋了。
+ * 同一 key、同一句话，30 分钟内只记第一次；内容变了（比如从"没有剪辑师"变成"发不出去"）会重新记。
+ */
+const LOG_QUIET_MS = 30 * 60 * 1000;
+
+function logQuiet(key, text) {
+  flowState.quiet = flowState.quiet || {};
+  const k = String(key);
+  const rec = flowState.quiet[k] || {};
+  if (rec.text === text && Date.now() - (rec.at || 0) < LOG_QUIET_MS) return;
+  flowState.quiet[k] = { at: Date.now(), text };
+  const keys = Object.keys(flowState.quiet);
+  if (keys.length > 200) {
+    keys.sort((a, b) => (flowState.quiet[a].at || 0) - (flowState.quiet[b].at || 0))
+      .slice(0, keys.length - 100).forEach((x) => delete flowState.quiet[x]);
+  }
+  saveState();
+  log(text);
 }
 
 function remember(key) {
@@ -258,6 +341,7 @@ function effectiveTrim(rec) {
 async function writeTrim(rec, stage) {
   if (!V.has(F.trim, stage)) {
     setShadow(rec.recordId, stage);
+    rec.trimEffective = stage;
     log(`剪辑进度「${stage}」这张表没有这一档，只记在机器人这边（${rec.episode} 集）`);
     return false;
   }
@@ -269,9 +353,12 @@ async function writeTrim(rec, stage) {
     log(`剪辑进度「${stage}」写表失败（${(e && e.message) || e}），改记在机器人这边`);
     V.load(true).catch(() => {});
     setShadow(rec.recordId, stage);
+    rec.trimEffective = stage;
     return false;
   }
   setShadow(rec.recordId, '');
+  rec.trimStage = stage;
+  rec.trimEffective = stage;
   return true;
 }
 
@@ -317,33 +404,24 @@ async function autoReview(rec, force) {
   if (!isReviewCandidate(rec)) return false;
 
   const key = reviewKey(rec);
+  refreshNotificationSignature(key, rec);
   if (!force && flowState.sent.has(key)) return false;
 
   // 只通知审片人：剪辑师要等一审通过、素材上传后才介入（2026-10-27 小熊定的）
-  const targets = rec.reviewers;
-  if (!targets.length) {
-    log(`②自动化：${rec.episode} 集没有审片人，跳过`);
+  if (!rec.reviewers.length) {
+    logQuiet(`review-notarget|${rec.recordId}`, `②自动化：${rec.episode} 集没有审片人，跳过`);
     return;
   }
+  if (force) {
+    flowState.notificationCycles = flowState.notificationCycles || {};
+    flowState.notificationCycles[key] = require('node:crypto').randomUUID();
+    saveState();
+  }
+  const cycle = (flowState.notificationCycles?.[key] || 'initial') + '|' + notificationSignature(rec);
+  const result = await notifyDetailed(rec.reviewers, C.reviewCard(rec), `一审 ${rec.episode}`, rec, `${PC.current?.()?.key || rec.projectKey || 'legacy'}|${key}|${cycle}`);
+  if (result.complete) { remember(key); delete flowState.tries[key]; }
+  return result.complete && result.sent > 0;
 
-  const ok = await notify(targets, C.reviewCard(rec), `一审 ${rec.episode}`);
-  if (ok > 0) {
-    remember(key);
-    if (flowState.tries[key]) delete flowState.tries[key];
-    return true;
-  }
-  // 发失败了：最多重试 3 轮，之后记成已发，避免每轮都撞（以前是失败一次就永不重试，会静默漏卡）
-  const n = (flowState.tries[key] || 0) + 1;
-  flowState.tries[key] = n;
-  if (n >= 3) {
-    log(`②自动化：${rec.episode} 集连发 ${n} 次都失败（多半是可用范围/跨租户），先放弃`);
-    remember(key);
-    delete flowState.tries[key];
-  } else {
-    log(`②自动化：${rec.episode} 集卡片没发出去，${n}/3，下一轮再试`);
-  }
-  saveState();
-  return false;
 }
 
 function reviewKey(rec) {
@@ -388,23 +466,16 @@ function markTrimSent(rec) {
 /** 发精剪卡（唯一的出口：巡检和按钮都走这里，带冷却 + 去重） */
 async function sendTrimCard(rec) {
   const key = trimKey(rec);
+  refreshNotificationSignature(key, rec);
   if (flowState.sent.has(key)) return false;
   if (!rec.editors.length) {
-    log(`③自动化：${rec.episode} 集没有剪辑师，跳过精剪卡`);
+    logQuiet(`trim-noeditor|${rec.recordId}`, `③自动化：${rec.episode} 集没有剪辑师，跳过精剪卡`);
     return false;
   }
-  if (trimRecentlySent(rec)) {
-    log(`③${rec.episode} 集精剪卡 5 分钟内发过了，不再重复发`);
-    return false;
-  }
-  const n = await notify(rec.editors, C.trimCard(rec), `开始精剪 ${rec.episode}`);
-  if (n > 0) {
-    remember(key);
-    markTrimSent(rec);
-    return true;
-  }
-  log(`③自动化：${rec.episode} 集精剪卡没发出去，下一轮再试`);
-  return false;
+  const result = await notifyDetailed(rec.editors, C.trimCard(rec), `开始精剪 ${rec.episode}`, rec, `${rec.projectKey || 'legacy'}|${key}|${flowState.notificationCycles?.[key] || 'initial'}|${notificationSignature(rec)}`);
+  if (result.complete) { remember(key); markTrimSent(rec); }
+  return result.complete && result.sent > 0;
+
 }
 
 async function autoTrim(rec) {
@@ -442,6 +513,9 @@ async function tick() {
         const st = `${rec.stage}|${rec.review}`;
         const prev = flowState.seen[rec.recordId];
         if (prev && prev !== st) {
+          flowState.notificationCycles = flowState.notificationCycles || {};
+          flowState.notificationCycles[reviewKey(rec)] = require('node:crypto').randomUUID();
+          if (!trimReady(rec)) flowState.notificationCycles[trimKey(rec)] = require('node:crypto').randomUUID();
           for (const k of [...flowState.sent]) {
             if (!k.startsWith(rec.recordId + '|')) continue;
             const suffix = k.slice(rec.recordId.length + 1);
@@ -484,7 +558,7 @@ async function tick() {
         if (await autoStart(rec)) stats.started++;
       } catch (e) {
         stats.failed++;
-        log(`①自动化失败（${rec.episode} 集）：${(e && e.message) || e}`);
+        logQuiet(`auto1-fail|${rec.recordId}`, `①自动化失败（${rec.episode} 集）：${(e && e.message) || e}`);
       }
     }
     for (const rec of records) {
@@ -492,7 +566,7 @@ async function tick() {
         if (await autoReview(rec)) stats.reviewed++;
       } catch (e) {
         stats.failed++;
-        log(`②自动化失败（${rec.episode} 集）：${(e && e.message) || e}`);
+        logQuiet(`auto2-fail|${rec.recordId}`, `②自动化失败（${rec.episode} 集）：${(e && e.message) || e}`);
       }
     }
     for (const rec of records) {
@@ -500,7 +574,7 @@ async function tick() {
         if (await autoTrim(rec)) stats.trimmed++;
       } catch (e) {
         stats.failed++;
-        log(`③自动化失败（${rec.episode} 集）：${(e && e.message) || e}`);
+        logQuiet(`auto3-fail|${rec.recordId}`, `③自动化失败（${rec.episode} 集）：${(e && e.message) || e}`);
       }
     }
   } catch (e) {
@@ -509,7 +583,10 @@ async function tick() {
   } finally {
     ticking = false;
   }
-  log(`巡检：扫 ${stats.scanned} 条，开工 ${stats.started}，发卡 ${stats.reviewed}${stats.trimmed ? '，精剪卡 ' + stats.trimmed : ''}${stats.failed ? '，失败 ' + stats.failed : ''}`);
+  const tickLine = `巡检：扫 ${stats.scanned} 条，开工 ${stats.started}，发卡 ${stats.reviewed}${stats.trimmed ? '，精剪卡 ' + stats.trimmed : ''}${stats.failed ? '，失败 ' + stats.failed : ''}`;
+  // 没做任何事就别每 10 秒打一行，30 分钟报一次「还活着」够了
+  if (stats.started || stats.reviewed || stats.trimmed || stats.failed) log(tickLine);
+  else logQuiet('tick-idle', tickLine);
   lastTick = { at: Date.now(), stats };
   return stats;
 }
@@ -574,6 +651,8 @@ function snapshotOf(rec) {
     stage: rec.stage || '',
     review: rec.review || '',
     trimStage: rec.trimStage || '',
+    doneAt: rec.doneAt ?? null,
+    shadow: shadowStage(rec.recordId),
   };
 }
 
@@ -582,6 +661,8 @@ function snapshotOf(rec) {
  * 「已通知到 张三（审片人）……」。只有真发成功（notify 返回 >0）才说。
  */
 async function tellOperator(operatorOpenId, people, role, what) {
+  people = deliveredPeople(people);
+  if (!people.length) return;
   if (!operatorOpenId) return;
   const hit = (people || []).filter((p) => p && p.id);
   if (!hit.length) return;
@@ -595,10 +676,10 @@ async function tellOperator(operatorOpenId, people, role, what) {
 }
 
 /** 记下改前的值（撤回用） */
-function rememberUndo(msgId, recordId, actionName, before) {
+function rememberUndo(msgId, recordId, actionName, before, after, operator) {
   if (!msgId || !before) return false;
   flowState.undo = flowState.undo || {};
-  flowState.undo[msgId] = { action: actionName, recordId, before, at: Date.now() };
+  flowState.undo[msgId] = { action: actionName, recordId, before, after, operator, at: Date.now() };
   const keys = Object.keys(flowState.undo);
   if (keys.length > UNDO_KEEP) {
     keys
@@ -663,8 +744,6 @@ function decorateCard(card, opt) {
 /** 兜底：卡片重建不出来时，在结果卡上额外挂一个撤回按钮 */
 function withUndo(card, msgId, recordId, actionName, before) {
   if (!card || !msgId || !before) return card;
-  rememberUndo(msgId, recordId, actionName, before);
-
   const value = { a: 'undo', r: recordId, m: msgId };
   const text = { tag: 'plain_text', content: '↩︎ 撤回' };
   if (card.schema === '2.0') {
@@ -712,7 +791,7 @@ async function handleCardAction(action, operatorOpenId, msgId) {
   const { a, r } = action || {};
   if (!a || !r) return null;
 
-  const key = `${a}|${r}`;
+  const key = String(r);
   if (inflight.has(key)) {
     log(`卡片重复点击，忽略（${ACTION_LABEL[a] || a} · ${r}）`);
     return { toast: { type: 'info', content: '正在处理，别急' } };
@@ -727,6 +806,16 @@ async function handleCardAction(action, operatorOpenId, msgId) {
       log(`按钮「${ACTION_LABEL[a] || a}」读记录失败：${(e && e.message) || e}`);
       await patchCard(msgId, C.settledCard('处理失败', [`读记录失败：${(e && e.message) || e}`], 'red'));
       return { toast: { type: 'error', content: '读记录失败' } };
+    }
+
+    const roles = {review_pass:'reviewers',review_fail:'reviewers',uploaded:'artist',reupload:'artist',
+      trim_start:'editors',trim_done:'editors',final_view:'reviewers',final_pass:'reviewers'};
+    const owner = cfg.INBOX?.notifyOpenId;
+    const isOwner = !!owner && operatorOpenId === owner;
+    const role = roles[a];
+    if (!operatorOpenId || (a !== 'undo' && !isOwner && (!role || !(rec[role] || []).some(p => p.id === operatorOpenId)))) {
+      if (operatorOpenId) await sendTextTo(operatorOpenId, '这项操作仅限当前任务的对应负责人或管理员执行。');
+      return { toast: { type: 'error', content: '当前人员无权执行此操作' } };
     }
 
     if (action.batch) {
@@ -750,21 +839,25 @@ async function handleCardAction(action, operatorOpenId, msgId) {
           card = C.settledCard(`${title} · 撤回`, [toast], 'grey');
           break;
         }
-        const b = info.before || {};
-        const patch = {};
-        if (b.progress !== rec.progress) patch[F.progress] = b.progress || null;
-        if (b.stage !== rec.stage) patch[F.stage] = b.stage || null;
-        if (b.review !== rec.review) patch[F.review] = b.review || null;
-        if (b.trimStage !== rec.trimStage) patch[F.trim] = b.trimStage || null;
-        if (info.action === 'final_pass') patch['实际完成日期'] = null;
-        if (Object.keys(patch).length) {
-          await updateFields(r, patch);
-          log(`撤回 ${rec.episode} 集：${Object.keys(patch).join('、')} 改回原值（原动作 ${ACTION_LABEL[info.action] || info.action}）`);
+        if (info.recordId !== r || !info.after || !info.operator || (!isOwner && info.operator !== operatorOpenId)) {
+          await sendTextTo(operatorOpenId, '这条撤回记录不匹配、属于其他人员或来自旧版本，请核对表格后手动处理。');
+          return { toast: { type: 'error', content: '无法安全撤回此操作' } };
         }
-        // 剪辑的中间档位可能只记在机器人这边（表上没这一档），撤回时一起清掉
-        setShadow(r, '');
+        const b = info.before;
+        const now = snapshotOf(rec);
+        const changed = Object.keys(info.after).filter(field => b[field] !== info.after[field]);
+        if (changed.some(field => now[field] !== info.after[field])) {
+          await sendTextTo(operatorOpenId, '这条任务在操作后又发生了变化，未撤回，请先核对当前状态。');
+          return { toast: { type: 'error', content: '状态已变化，未撤回' } };
+        }
+        const names = {progress:F.progress,stage:F.stage,review:F.review,trimStage:F.trim,doneAt:'实际完成日期'};
+        const patch = {};
+        for (const field of changed) if (names[field]) patch[names[field]] = b[field] === '' ? null : b[field];
+        if (Object.keys(patch).length) await updateFields(r, patch);
+        if (changed.includes('shadow')) setShadow(r, b.shadow || '');
         const restored = Object.assign({}, rec, {
-          progress: b.progress, stage: b.stage, review: b.review, trimStage: b.trimStage,
+          ...Object.fromEntries(changed.map(field => [field, b[field]])),
+          trimEffective: effectiveTrim({...rec, trimStage: changed.includes('trimStage') ? b.trimStage : rec.trimStage}),
         });
         delete flowState.undo[key];
         saveState();
@@ -790,7 +883,7 @@ async function handleCardAction(action, operatorOpenId, msgId) {
         rec.trimStage = '可剪辑';
         rec.trimEffective = '可剪辑';
         const uploadBlocked = artistBlockReason(rec.artist);
-        const upN = uploadBlocked ? 0 : await notify(rec.artist, C.uploadCard(rec), `请上传素材 ${rec.episode}`);
+        const upN = uploadBlocked ? 0 : await notify(rec.artist, C.uploadCard(rec), `请上传素材 ${rec.episode}`, rec);
         batchNotification = `制作师通知 ${upN}/${rec.artist.length} 人`;
         if (upN > 0) await tellOperator(operatorOpenId, rec.artist, '制作师', '「请上传素材」卡片');
         else log(`「请上传素材」卡没发（${uploadBlocked || '发送失败'}）：${rec.episode} 集`);
@@ -828,7 +921,7 @@ async function handleCardAction(action, operatorOpenId, msgId) {
         rec.review = '有修改';
         rec.stage = '修改中';
         const editBlocked = artistBlockReason(rec.artist);
-        const editN = editBlocked ? 0 : await notify(rec.artist, C.editCard(rec, action.batch && action.batch.note), `请修改 ${rec.episode}`);
+        const editN = editBlocked ? 0 : await notify(rec.artist, C.editCard(rec, action.batch && action.batch.note), `请修改 ${rec.episode}`, rec);
         batchNotification = `制作师通知 ${editN}/${rec.artist.length} 人`;
         if (editN > 0) await tellOperator(operatorOpenId, rec.artist, '制作师', '「请修改」卡片');
         else log(`「请修改」卡没发（${editBlocked || '发送失败'}）：${rec.episode} 集`);
@@ -882,16 +975,17 @@ async function handleCardAction(action, operatorOpenId, msgId) {
           break;
         }
         before = snapshotOf(rec);
-        await updateFields(r, { [F.stage]: '已粗剪待一审' });
+        await updateFields(r, { [F.stage]: '已粗剪待一审', [F.review]: '未审阅' });
         rec.stage = '已粗剪待一审';
+        rec.review = '未审阅';
         const again = await autoReview(rec, true); // 强制重发一审卡片
         if (again) await tellOperator(operatorOpenId, rec.reviewers, '审片人', '这一集的新一审卡片');
-        toast = '已记回待一审，已重发审阅卡片';
+        toast = again ? '已记回待一审，已重发审阅卡片' : '已记回待一审，审阅卡片未送达';
         card = C.settledCard(`${title} · 修改已上传`, [
           `**素材生成进展**：已粗剪待一审`,
           `**审片人**：${C.atList(rec.reviewers)}`,
           '',
-          '已重新发一审卡片给审片人和剪辑师。',
+          again ? '已重新发一审卡片给审片人。' : '审阅卡片未送达，请核对审片人和通知设置。',
         ], 'blue');
         break;
       }
@@ -919,6 +1013,7 @@ async function handleCardAction(action, operatorOpenId, msgId) {
       }
 
       case 'trim_done': {
+        if (rec.sceneMode && !rec.trimPreviewUrl) throw Error('精剪目录暂不配置，当前不能提交精剪完成或发送终审卡片');
         const cur = effectiveTrim(rec);
         if (['待审片', '审片中', '已定剪'].includes(cur)) {
           toast = `剪辑进度已经是「${cur}」了`;
@@ -928,7 +1023,7 @@ async function handleCardAction(action, operatorOpenId, msgId) {
         before = snapshotOf(rec);
         const wrote = await writeTrim(rec, '待审片');
         rec.trimEffective = effectiveTrim(rec);
-        const finalN = await notify(rec.reviewers, C.finalCard(rec), `剪辑终审 ${rec.episode}`);
+        const finalN = await notify(rec.reviewers, C.finalCard(rec), `剪辑终审 ${rec.episode}`, rec);
         batchNotification = `终审通知 ${finalN}/${rec.reviewers.length} 人`;
         if (finalN > 0) await tellOperator(operatorOpenId, rec.reviewers, '审片人', '「剪辑终审」卡片');
         toast = wrote ? '已记为待审片，通知审片人终审' : '已记为待审片（本表无此档，记在机器人这边），通知审片人终审';
@@ -944,6 +1039,7 @@ async function handleCardAction(action, operatorOpenId, msgId) {
       }
 
       case 'final_view': {
+        if (rec.sceneMode && !rec.trimPreviewUrl) throw Error('精剪目录暂不配置，终审尚未启用');
         // 终审卡 2.0 的「查看成片」：跳分秒帧的同时回传，这里记成审片中
         const cur = effectiveTrim(rec);
         if (cur === '审片中' || cur === '已定剪') {
@@ -966,6 +1062,7 @@ async function handleCardAction(action, operatorOpenId, msgId) {
       }
 
       case 'final_pass': {
+        if (rec.sceneMode && !rec.trimPreviewUrl) throw Error('精剪目录暂不配置，终审尚未启用');
         if (rec.trimStage === '已定剪') {
           toast = '这一集已经定剪了';
           card = C.settledCard(`${title} · 已定剪`, ['这一集之前已经定剪了。'], 'grey');
@@ -980,6 +1077,7 @@ async function handleCardAction(action, operatorOpenId, msgId) {
           实际完成日期: now,
         });
         setShadow(r, ''); // 走到表里真有的那一档了，影子状态作废
+        Object.assign(rec, {review:'通过',trimStage:'已定剪',trimEffective:'已定剪',progress:'已完成',doneAt:now});
         toast = '已定剪，流程完成';
         card = C.settledCard2(`${title} · 已定剪`, [
           `**审阅反馈**：通过`,
@@ -998,11 +1096,12 @@ async function handleCardAction(action, operatorOpenId, msgId) {
     }
 
     if (action.batch && batchNotification) toast = `表格已更新；${batchNotification}`;
-    if (before) rememberUndo(msgId, r, a, before);
+    if (before) rememberUndo(msgId, r, a, before, snapshotOf(rec), operatorOpenId);
     // 优先在原卡上就地改：被点的按钮 → 撤回，其它按钮留着
     const recBefore = before
       ? Object.assign({}, rec, {
         progress: before.progress, stage: before.stage, review: before.review, trimStage: before.trimStage,
+        trimEffective: before.shadow || before.trimStage,
       })
       : rec;
     const orig = a === 'undo' ? null : rebuildCard(a, recBefore);
@@ -1035,11 +1134,18 @@ async function sendReviewFor(episode) {
   if (!rec) return `没找到 ${episode} 集的记录（按「集数」找的）。`;
   const targets = rec.reviewers;
   if (!targets.length) return `${episode} 集没有填审片人，没法发。`;
-  const ok = await notify(targets, C.reviewCard(rec), `一审 ${episode}（手动）`);
-  if (ok) remember(reviewKey(rec));
-  return ok
-    ? `已给 ${episode} 集发一审卡片：${targets.map((t) => t.name).join('、')}`
-    : `${episode} 集卡片没发出去，看日志。`;
+  const key=reviewKey(rec);
+  refreshNotificationSignature(key,rec);
+  flowState.notificationCycles=flowState.notificationCycles || {};
+  flowState.notificationCycles[key]=require('node:crypto').randomUUID();
+  saveState();
+  const cycle=flowState.notificationCycles[key]+'|'+notificationSignature(rec);
+  const result=await notifyDetailed(targets,C.reviewCard(rec),`一审 ${episode}（手动）`,rec,`${rec.projectKey || 'legacy'}|${key}|${cycle}`);
+  if(result.complete) remember(key);
+  return result.sent
+    ? `已给 ${episode} 集送达 ${deliveredPeople(targets).length}/${targets.length} 人：${deliveredPeople(targets).map(t=>t.name).join('、')}${result.complete?'':'；其余人员见通知台账'}`
+    : `${episode} 集本次未送达，请查看通知台账。`;
+
 }
 
 /** 把当前所有待审记录补发一遍（/flow backfill） */
@@ -1092,7 +1198,8 @@ async function tickProjects() {
   if (projectsTicking) return { skipped: true };
   projectsTicking = true;
   try {
-  let total = { scanned: 0, started: 0, reviewed: 0, failed: 0 };
+  await notificationOutbox().drain();
+  let total = { scanned: 0, started: 0, reviewed: 0, trimmed: 0, failed: 0 };
   const only = flowProjectKeys();
   for (const p of PC.projects()) {
     if (only && !only.includes(p.key)) continue;          // 只巡检 config.flow.projects 指定的项目
@@ -1107,11 +1214,12 @@ async function tickProjects() {
 }
 const scoped = fn => (id, ...args) => PC.forRecord(id, () => fn(id, ...args), allProjectRecords);
 module.exports = {
+  retryNotification: id => notificationOutbox().retry(id),
   decorateCard,
   startScheduler, tick: tickProjects,
   getLastTick: () => lastTick,
   handleCardAction: (action, ...args) => PC.forRecord(action.r, () => handleCardAction(action, ...args), allProjectRecords),
   fetchAllRecords: allProjectRecords, activeRecords, flowProjectKeys, mapRecord, updateFields: scoped(updateFields),
-  getRecord: scoped(getRecord), sendCard, notify, flat, sendReviewFor, backfill, effectiveTrim, setShadow,
+  getRecord: scoped(getRecord), sendCard, notify, deliveredPeople, flat, sendReviewFor, backfill, effectiveTrim, setShadow,
   autoReview: (rec, ...args) => PC.run(rec.projectKey || 'legacy', () => autoReview(rec, ...args)), reviewKey,
 };

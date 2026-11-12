@@ -22,7 +22,8 @@ echo "→ 拷贝代码…"
 rsync -a \
   --exclude node_modules --exclude logs --exclude downloads --exclude inbox \
   --exclude backups --exclude review-preview --exclude '.workbuddy' \
-  --exclude '.DS_Store' --exclude '.bot.lock' --exclude 'bot.pid' \
+  --exclude '.DS_Store' --exclude '.bot.lock' --exclude '.bot.lock-recovery' --exclude 'bot.pid' \
+  --exclude 'admin-commands' --exclude 'admin-runtime.json' --exclude '.restart-feedback.json' \
   "$SRC/" "$DEST:video-bot/"
 
 # 2. bsk 二进制（同架构直接拷，省得新机翻墙找官方仓库）

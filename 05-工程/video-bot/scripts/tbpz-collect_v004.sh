@@ -325,7 +325,7 @@ def unwrap(seg):
 
 TL = re.compile(r'^\d{1,2}:\d{2}(?::\d{2})?$')
 DATE = re.compile(r'^(今天|昨天|前天)')
-MONTHDAY = re.compile(r'^\d{1,2}-\d{1,2}(\s|$)')
+MONTHDAY = re.compile(r'^(?:\d{4}-)?\d{1,2}-\d{1,2}(\s|$)')
 
 def parse(text):
     lines = [l.strip() for l in text.split('\n')]

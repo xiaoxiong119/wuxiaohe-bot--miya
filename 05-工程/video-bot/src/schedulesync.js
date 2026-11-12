@@ -6,7 +6,9 @@ const execFile = promisify(require('child_process').execFile);
 const cfg = require('./config');
 const { getClient, withTimeout } = require('./feishu');
 
-const CLI = path.join(process.env.HOME, '.codebuddy/bin/lark-cli');
+const candidates = (process.env.PATH || '').split(path.delimiter).filter(Boolean).map(dir => path.join(dir, 'lark-cli'));
+candidates.push(path.join(process.env.HOME, '.local/bin/lark-cli'), path.join(process.env.HOME, '.codebuddy/bin/lark-cli'));
+const CLI = process.env.LARK_CLI || candidates.find(file => { try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); } catch { return false; } }) || 'lark-cli';
 const CONFIG = path.join(cfg.ROOT, 'config.json');
 const CLI_ENV = { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' };
 let running = false;
@@ -17,7 +19,7 @@ function check(res) {
 }
 async function cli(args) {
   const { stdout } = await execFile(CLI, ['--profile', cfg.APP_ID, ...args, '--as', 'bot', '--format', 'json'], {
-    timeout: 90000, maxBuffer: 24 * 1024 * 1024,
+    cwd: cfg.ROOT, timeout: 90000, maxBuffer: 24 * 1024 * 1024,
     env: CLI_ENV,
   });
   const result = JSON.parse(stdout);
@@ -33,11 +35,13 @@ async function cli(args) {
  * 注意：CLI 只允许把文件写到 cwd / /tmp / ~/files，临时文件放在自身 logs 目录下。
  */
 async function cellsGetFull(args) {
-  const out = path.join(cfg.ROOT, 'logs', `tbpq-cells-${process.pid}-${Date.now()}.json`);
+  const relativeOut = path.join('logs', `tbpq-cells-${process.pid}-${Date.now()}.json`);
+  const out = path.join(cfg.ROOT, relativeOut);
+  fs.mkdirSync(path.dirname(out), {recursive:true});
   try {
-    const { stdout } = await execFile(CLI, ['--profile', cfg.APP_ID, ...args, '--output-path', out,
+    const { stdout } = await execFile(CLI, ['--profile', cfg.APP_ID, ...args, '--output-path', relativeOut,
       '--max-chars', '20000000', '--as', 'bot', '--format', 'json'], {
-      timeout: 120000, maxBuffer: 8 * 1024 * 1024, env: CLI_ENV,
+      cwd: cfg.ROOT, timeout: 120000, maxBuffer: 8 * 1024 * 1024, env: CLI_ENV,
     });
     const receipt = JSON.parse(stdout);
     if (receipt.ok !== true) throw new Error(receipt.error?.message || '源排期读取失败');
@@ -167,7 +171,7 @@ function parseSource(data, layout, conf) {
 /**
  * 按集数分组，同一集的所有分段制作师相同就合并。
  * 合并后的记录：场次=1、排期分段=`第N集`、场景=各段并集、开始取最早、预计完成取最晚。
- * 原始分段名记在 mergedKeys 里，plan() 用它找到旧的 -1/-2 记录并清掉多余的那条。
+ * 原始分段保存在 segments 中；已存在多条记录时保留原场次和记录ID。
  */
 function mergeSameArtist(items) {
   const byEpisode = new Map();
@@ -190,6 +194,7 @@ function mergeSameArtist(items) {
       cells: group.flatMap(g => g.cells || []),
       personName: group[0].personName,
       mergedKeys: group.map(g => g.key),
+      segments: group,
       fields: {
         ...group[0].fields,
         '场次': 1,
@@ -244,19 +249,18 @@ function plan(items, records, defaults = {}) {
   const used = new Set();
   const create = [], update = [], remove = [];
   let unchanged = 0;
-  for (const item of items) {
+  for (const item of preserveExistingSegments(items, records)) {
     const merged = Array.isArray(item.mergedKeys) && item.mergedKeys.length > 1;
     const byKey = index.get(item.key), byPair = composite.get(identity(item.fields));
     let record = byKey || byPair;
-    // 合并项：把这一集原来按分段建的记录（第104集-1 / -2 …）都翻出来，
-    // 留一条改写成合并后的一条，其余删除；不删的话表里会留下没人管的旧分段。
+    // 合并只用于尚未拆分的新记录，已有分段一律保留。
     if (merged) {
       const candidates = [], seen = new Set();
       const push = r => { if (r && !seen.has(r.record_id)) { seen.add(r.record_id); candidates.push(r); } };
       for (const k of item.mergedKeys) push(index.get(k));
       push(record);
       const keep = candidates.find(r => Number(r.fields?.['场次']) === 1) || candidates[0] || null;
-      for (const r of candidates) if (keep && r.record_id !== keep.record_id && !used.has(r.record_id)) remove.push(r.record_id);
+      if (candidates.length > 1) throw new Error(`${item.key} 需保留原分段；缺少原始分段，停止同步`);
       record = keep;
     } else {
       if (byKey && byPair && byKey.record_id !== byPair.record_id) throw new Error(`${item.key} 分段与场次指向不同记录`);
@@ -274,10 +278,7 @@ function plan(items, records, defaults = {}) {
     if (record) used.add(record.record_id);
     if (!record) { create.push({ fields: { ...defaults, ...item.fields } }); continue; }
     const changed = Object.fromEntries(Object.entries(item.fields).filter(([k, v]) => canonical(record.fields[k], k) !== canonical(v, k)));
-    for (const [field, value] of Object.entries(defaults)) {
-      const current = record.fields[field];
-      if (current == null || current === '' || (Array.isArray(current) && current.length === 0)) changed[field] = value;
-    }
+    // 已有记录的流程状态、意见、关联一律不写；默认值只用于新增记录。
     if (Object.keys(changed).length) update.push({ record_id: record.record_id, fields: changed });
     else unchanged++;
   }
@@ -293,25 +294,23 @@ function missingOptions(items, fields) {
     return { field, names: [...new Set(wanted)].filter(name => !existing.has(name)) };
   }).filter(entry => entry.names.length);
 }
+// 日常同步只验证结构。字段/选项迁移必须另行准备和审核。
 async function ensureOptions(client, target, items) {
-  // 重新读取字段，保留已有选项 ID、颜色和完整属性，只追加所需名称。
   const fresh = await listAll(args => client.bitable.v1.appTableField.list(args), target);
   const additions = missingOptions(items, fresh);
-  for (const { field, names } of additions) {
-    check(await withTimeout(client.bitable.v1.appTableField.update({
-      path: { ...target, field_id: field.field_id },
-      data: { field_name: field.field_name, type: field.type,
-        ...(field.description !== undefined ? { description: field.description } : {}),
-        property: { ...field.property, options: [...(field.property?.options || []), ...names.map(name => ({ name }))] } },
-    }), 20000, '补建排期选项'));
-  }
-  if (additions.length) {
-    const actual = await listAll(args => client.bitable.v1.appTableField.list(args), target);
-    if (missingOptions(items, actual).length) throw new Error('补建选项后回读不一致，未写记录');
-  }
+  if (additions.length) throw new Error('需要单独配置选项：' + additions.map(e => e.field.field_name + '：' + e.names.join('、')).join('；'));
+}
+function preserveExistingSegments(items, records) {
+  return items.flatMap(item => {
+    if (!(item.mergedKeys?.length > 1)) return [item];
+    const matches = records.filter(r => Number(r.fields?.['集数']) === Number(item.fields['集数']));
+    if (matches.length <= 1) return [item];
+    if (!item.segments?.length) throw new Error(`${item.key} 需保留原分段；缺少原始分段，停止同步`);
+    return item.segments;
+  });
 }
 /** /tbpq 在飞书开放平台注册的 command_id（由 application +slash-command-list 取得）。 */
-const TBPQ_COMMAND_ID = '7701925894633311246';
+const TBPQ_COMMAND_ID = '1000245297401576094';
 
 /**
  * 把「当前项目 / 上次同步时间 / 排到第几集」刷到飞书斜杠命令的描述上。
@@ -377,7 +376,9 @@ async function run({ dryRun = false, onProgress = null } = {}) {
     const optionItems = [...parsed.items, { fields: defaults }];
     const optionAdditions = missingOptions(optionItems, fields).map(({ field, names }) => ({ field: field.field_name, names }));
     const records = await listAll(args => client.bitable.v1.appTableRecord.list(args), target);
+    parsed.items = preserveExistingSegments(parsed.items, records);
     const changes = plan(parsed.items, records, defaults);
+    const blockers = [...(!segmentField ? ['缺少文本字段：排期分段'] : []), ...optionAdditions.map(e => `缺少选项：${e.field}：${e.names.join('、')}`)];
     const points = conf.pointsTableId ? await require('./points-sync').prepare(client, {app_token:conf.appToken,table_id:conf.pointsTableId}, parsed.items, listAll, conf.projectName) : null;
     // API 写人员字段不操作网页的“通知”选项，也不调用 IM；还须阻止表内工作流间接发信。
     const workflows = await cli(['base', '+workflow-list', '--base-token', conf.appToken]);
@@ -386,12 +387,15 @@ async function run({ dryRun = false, onProgress = null } = {}) {
     const report = { at: new Date().toISOString(), dryRun, projectName: conf.projectName, sourceRevision: parsed.revision, sourceUrl: conf.sourceUrl, targetUrl: conf.targetUrl,
       notificationMode: 'OpenAPI-fields-only; no-IM; no-workflows', total: parsed.items.length, episodes: new Set(parsed.items.map(i => i.fields['集数'])).size,
       points: points ? {created:points.create.length, unchanged:points.unchanged} : null,
-      created: changes.create.length, updated: changes.update.length, unchanged: changes.unchanged, removed: changes.remove.length, optionAdditions, merges: parsed.merges, warnings: parsed.warnings, items: parsed.items };
+      created: changes.create.length, updated: changes.update.length, unchanged: changes.unchanged, removed: changes.remove.length, optionAdditions, blockers, merges: parsed.merges.map(x => x.replace("已合并为单集1场", "按现有记录保留分段；新集可归并为单集1场")), warnings: parsed.warnings, items: parsed.items };
     const reportPath = path.join(cfg.ROOT, 'logs', `tbpq-${Date.now()}-${dryRun ? 'preview' : 'sync'}.json`);
     fs.writeFileSync(reportPath, JSON.stringify({ ...report, status: 'planned' }, null, 2));
     if (!dryRun) {
+      if (blockers.length) throw new Error('未写入：需要单独配置表结构。' + blockers.join('；'));
       await ensureOptions(client, target, optionItems);
-      if (!segmentField) check(await client.bitable.v1.appTableField.create({ path: target, data: { field_name: '排期分段', type: 1 } }));
+      const backupPath = path.join(cfg.ROOT, 'backups', 'schedule', `${Date.now()}.json`);
+      fs.mkdirSync(path.dirname(backupPath), {recursive:true});
+      require('./json-file').writeJson(backupPath, { at: report.at, target, records, changes });
       for (const [kind, entries] of [['batchCreate', changes.create], ['batchUpdate', changes.update]]) {
         // 串行写入；每次重新读目标、按分段去重，避免重复触发排期更新。
         for (let i = 0; i < entries.length; i += 100) {
@@ -400,12 +404,6 @@ async function run({ dryRun = false, onProgress = null } = {}) {
           const result = check(await withTimeout(client.bitable.v1.appTableRecord[kind]({ path: target, params: { user_id_type: 'open_id' }, data: { records: batch } }), 30000, '写排期'));
           if (result.records?.length !== batch.length) throw new Error('写入回执不完整，请运行预览核对后重试');
         }
-      }
-      // 合并后多余的旧分段（例如「第104集-2」）在这里清掉，否则表里会留着没人管的记录。
-      // 放在写入之后：先保证合并后的那条已经写好，删错了也能从同步日志还原。
-      for (let i = 0; i < changes.remove.length; i += 500) {
-        const batch = changes.remove.slice(i, i + 500);
-        check(await withTimeout(client.bitable.v1.appTableRecord.batchDelete({ path: target, data: { records: batch } }), 30000, '删除合并前的旧分段'));
       }
       const actual = await listAll(args => client.bitable.v1.appTableRecord.list(args), target);
       const remaining = plan(parsed.items, actual, defaults);
@@ -424,10 +422,10 @@ function summary(r) {
   return [`${r.projectName || ''}${r.dryRun ? '排期预览' : '✅ 排期同步完成'}：${r.episodes} 集 / ${r.total} 个分段`,
     `${r.dryRun ? '将新增' : '新增'} ${r.created}，${r.dryRun ? '将更新' : '更新'} ${r.updated}，不变 ${r.unchanged}。`,
     ...(r.removed ? [`${r.dryRun ? '将删除' : '删除'} ${r.removed} 条合并前的旧分段（同一集同一制作师已合成单集1场）。`] : []),
-    ...((r.optionAdditions || []).length ? [`${r.dryRun ? '将自动补建' : '自动补建'}选项：${r.optionAdditions.map(e => e.field + '：' + e.names.join('、')).join('；')}`] : []),
+    ...((r.blockers || []).length ? ['未就绪（不会自动改表结构）：' + r.blockers.join('；')] : []),
     ...(r.points ? [`积分统计：补齐 ${r.points.created} 行，已有 ${r.points.unchanged} 行保持不变；不修改积分。`] : []),
-    '同步排期和制作师，空白状态补默认值；保留已有状态，不发送人员通知。',
+    '同步排期和制作师；默认状态只用于新增记录，已有流程字段不写，不发送人员通知。',
     ...((r.merges || []).length ? ['合并提示：', ...r.merges] : []),
     ...(r.warnings.length ? ['待补场景：', ...r.warnings] : []), r.targetUrl].join('\n');
 }
-module.exports = { isRunning: () => running, run, summary, parseSource, plan, color, date, missingOptions, ensureOptions, refreshCommandDescription, TBPQ_COMMAND_ID };
+module.exports = { isRunning: () => running, run, summary, parseSource, plan, color, date, missingOptions, ensureOptions, preserveExistingSegments, refreshCommandDescription, TBPQ_COMMAND_ID };
